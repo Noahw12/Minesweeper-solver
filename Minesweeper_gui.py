@@ -6,7 +6,7 @@ class GUI:
     def __init__(self, board):
         pygame.init()
         pygame.mixer.quit()
-        self.running = True
+        #self.running = True
         self.board = board
         self.tileSize = 32
         self.width = self.board.cols * self.tileSize
@@ -40,6 +40,7 @@ class GUI:
         return images
     
     def display(self):
+        self.handle_events()
         self.screen.fill((0, 0, 0))  # Clear the screen
         
         for y, row in enumerate(self.board.getTileValues()):
@@ -53,17 +54,23 @@ class GUI:
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                self.running = False   
-                    
-board = ms.Board(ms.Difficulty.EXPERT)
-board.firstClear(5,5)
-gui = GUI(board)
-board.nicePrint()
-print('\n')
-board.nicePrintTrueValue()
-while gui.running:
-    gui.handle_events()
-    gui.display()
-    board.guess()
-    time.sleep(0.1)
+                self.running = False 
+                
+    # def run(self):
+    #     self.running = True
+    #     while self.running:
+    #         self.display()
+    #         pygame.time.Clock().tick(30)
+                                            
+# board = ms.Board(ms.Difficulty.EXPERT)
+# board.firstClear(5,5)
+# gui = GUI(board)
+# board.nicePrint()
+# print('\n')
+# board.nicePrintTrueValue()
+# while True:
+#     gui.handle_events()
+#     gui.display()
+#     board.guess()
+    #time.sleep(0.1)
     

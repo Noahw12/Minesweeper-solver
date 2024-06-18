@@ -38,6 +38,9 @@ class Board:
         self.rows, self.cols, self.mines = self.get_dimensions(diff)
         self.tiles = self.createBoard()
         self.game_status = BoardState.ONGOING
+        #Make the first move
+        self.firstClear(np.random.randint(0,self.cols -1), 
+                              np.random.randint(0,self.rows-1))
             
             
     def get_dimensions(self, diff):
@@ -51,13 +54,12 @@ class Board:
     def createBoard(self): 
         return [[Tile() for _ in range(self.cols)] for _ in range(self.rows)]
             
-    def firstClearSmallSafeZone(self, row, col):
-        mines_placed = 0
-        while mines_placed < self.mines:
-            r, c = np.random.randint(0, self.rows - 1), np.random.randint(0, self.cols - 1)
-            if (r, c) != (row, col):
-                self.getTile(r,c).setTrueValue(-1)
-                mines_placed += 1
+    def firstClearSmallSafeZone(self, row, col):         
+        all_positions = [(r, c) for r in range(self.rows) for c in range(self.cols)]
+        available_positions = [pos for pos in all_positions if pos != (row,col)]
+        np.random.shuffle(available_positions)
+        for r, c in available_positions[:self.mines]:
+            self.getTile(r,c).setTrueValue(-1)
 
         for r in range(row):
             for c in range(col):
@@ -69,20 +71,18 @@ class Board:
         
         self.clearTile(row,col)
                 
-    #TODO antalet bomber är fel
     def firstClear(self, row, col):
         #Place mines ensuring first click is safe
         safe_zone = {(row + i, col + j) for i in range(-1, 2) 
                      for j in range(-1, 2) if 0 <= row + i < self.rows and 0 <= col + j < self.cols}
         
-        mines_placed = 0
-        while mines_placed < self.mines:
-            r, c = np.random.randint(0, self.rows - 1), np.random.randint(0, self.cols - 1)
-            if (r, c) not in safe_zone:
-                self.tiles[r][c].setTrueValue(-1)
-                mines_placed += 1
+        all_positions = [(r, c) for r in range(self.rows) for c in range(self.cols)]
+        available_positions = [pos for pos in all_positions if pos not in safe_zone]
+        np.random.shuffle(available_positions)
+        for r, c in available_positions[:self.mines]:
+            self.getTile(r,c).setTrueValue(-1)
 
-        # Calculate adjacent mines for each cell
+        #Calculate adjacent mines for each cell
         for r in range(self.rows):
             for c in range(self.cols):
                 if self.tiles[r][c].getTrueValue() == -1:
@@ -98,9 +98,13 @@ class Board:
         
     def getTileValues(self):
         return np.array([[tile.getValue() for tile in row] for row in self.tiles])
+    
+    def getTrueTileValues(self):
+        return np.array([[tile.getTrueValue() for tile in row] for row in self.tiles])
         
+    #TODO se till att denna är korrekt
     def winCheck(self): 
-        if not np.any(self.getTileValues() == 9):
+        if np.count_nonzero(self.getTileValues() == 9) == self.mines:
             self.game_status = BoardState.WON
     
     def nicePrint(self):
@@ -128,7 +132,7 @@ class Board:
                 else:
                     niceRow += str(tile.getTrueValue()) + ' '  
             print(niceRow)
-            
+    
     def readTiles(self, row, col):
         tileVal = self.getTile(row,col).getValue()
         
@@ -153,10 +157,14 @@ class Board:
         elif tileVal == -1:
             self.game_status = BoardState.LOST
             
+    #TODO if satsen ska inte behövas? (fixa readtiles)
     def clearTile(self, row, col):
-        if self.getTile(row,col).getValue() == 9:
+        #print(self.getTileValues())
+        if self.getTile(row,col).getValue():
             self.getTile(row,col).clear()
             self.readTiles(row, col)
+            self.winCheck()
+            
     
     def flagTile(self, row, col):
         self.getTile(row,col).flag()
