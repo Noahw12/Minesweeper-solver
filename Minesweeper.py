@@ -102,7 +102,6 @@ class Board:
     def getTrueTileValues(self):
         return np.array([[tile.getTrueValue() for tile in row] for row in self.tiles])
         
-    #TODO se till att denna är korrekt
     def winCheck(self): 
         if np.count_nonzero(self.getTileValues() == 9) == self.mines:
             self.game_status = BoardState.WON
@@ -165,7 +164,6 @@ class Board:
             self.readTiles(row, col)
             self.winCheck()
             
-    
     def flagTile(self, row, col):
         self.getTile(row,col).flag()
         

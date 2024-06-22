@@ -1,23 +1,19 @@
 import gymnasium as gym
 import numpy as np
 import Minesweeper as ms
-import Minesweeper_gui as mg
 from gymnasium.envs.registration import register
-import pygame
+import torch
 
 diff = ms.Difficulty.BEGINNER
 
 class MinesweeperEnv(gym.Env):
-    def __init__(self, interface=False):
+    def __init__(self):
         super().__init__()
         self.board = ms.Board(diff)
-        self.action_space = gym.spaces.Discrete(8 * 8 * 1)
+        self.action_space = gym.spaces.Discrete(self.board.cols * self.board.rows)
         self.observation_space = gym.spaces.Box(low=-1, high=10, 
                                                 shape=(self.board.cols, self.board.rows), dtype=np.int32)
         self.state = self.get_state()
-        # if interface:
-        #     self.gui = mg.GUI(self.board)
-            #self.gui.run()
         
     def seed(self, seed=None):
         #Seed the random number generator if your environment uses one
@@ -76,13 +72,15 @@ class MinesweeperEnv(gym.Env):
         return reward, done
 
     def render(self):
-        # self.gui.display()
-        # pygame.event.pump()
         self.board.nicePrint() 
         
 class MaskedMinesweeperEnv(gym.Wrapper):
     def __init__(self, env):
         super(MinesweeperEnv, self).__init__(env)
+        self.observation_space = gym.spaces.Dict({
+            "obs": env.observation_space,
+            "action_mask": gym.spaces.Box(low=0, high=1, shape=(self.env.action_space.n,), dtype=bool)
+        })
         
     def get_valid_actions(self):
         valid_positions = np.argwhere(self.env.board.getTileValues() == 9)
@@ -101,10 +99,19 @@ class MaskedMinesweeperEnv(gym.Wrapper):
             #Agent should not take this action
             raise ValueError(f"Invalid action: {action}")
         
-        return self.env.step(action)
+        obs, reward, done, info = self.env.step(action)
+        action_mask = self.get_action_mask()
+        return {"obs": torch.tensor(obs, dtype=torch.int32), 
+                "action_mask": torch.tensor(action_mask, dtype=torch.bool)}, reward, done, info
+    
+    def reset(self):
+        obs, info = self.env.reset()
+        action_mask = self.get_action_mask()
+        return {"obs": torch.tensor(obs, dtype=torch.int32), 
+                "action_mask": torch.tensor(action_mask, dtype=torch.bool)}, info
     
 register(
     id='Minesweeper-v0',
     entry_point='Minesweeper_env:MinesweeperEnv',
-    max_episode_steps=500,
+    max_episode_steps=100,
 )
