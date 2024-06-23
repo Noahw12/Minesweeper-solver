@@ -76,36 +76,31 @@ class MinesweeperEnv(gym.Env):
         
 class MaskedMinesweeperEnv(gym.Wrapper):
     def __init__(self, env):
-        super(MinesweeperEnv, self).__init__(env)
+        super(MaskedMinesweeperEnv, self).__init__(env)
         self.observation_space = gym.spaces.Dict({
             "obs": env.observation_space,
             "action_mask": gym.spaces.Box(low=0, high=1, shape=(self.env.action_space.n,), dtype=bool)
         })
         
     def get_valid_actions(self):
-        valid_positions = np.argwhere(self.env.board.getTileValues() == 9)
-        valid_actions = valid_positions[:, 0] * self.env.board.cols + valid_positions[:, 1]
+        valid_positions = np.argwhere(self.env.unwrapped.board.getTileValues() == 9)
+        valid_actions = valid_positions[:, 0] * self.env.unwrapped.board.cols + valid_positions[:, 1]
         return valid_actions
     
     def get_action_mask(self):
-        mask = np.zeros(self.env.action_space.n, dtype=bool)
+        mask = np.zeros(self.env.unwrapped.action_space.n, dtype=bool)
         valid_actions = self.get_valid_actions()
         mask[valid_actions] = True
         return mask
         
-    def step(self, action):
-        valid_actions = self.get_valid_actions()
-        if action not in valid_actions:
-            #Agent should not take this action
-            raise ValueError(f"Invalid action: {action}")
-        
-        obs, reward, done, info = self.env.step(action)
+    def step(self, action):      
+        obs, reward, done, info, truncated = self.env.unwrapped.step(action)
         action_mask = self.get_action_mask()
         return {"obs": torch.tensor(obs, dtype=torch.int32), 
-                "action_mask": torch.tensor(action_mask, dtype=torch.bool)}, reward, done, info
+                "action_mask": torch.tensor(action_mask, dtype=torch.bool)}, reward, done, info, truncated
     
-    def reset(self):
-        obs, info = self.env.reset()
+    def reset(self, seed=None, options=None):
+        obs, info = self.env.unwrapped.reset()
         action_mask = self.get_action_mask()
         return {"obs": torch.tensor(obs, dtype=torch.int32), 
                 "action_mask": torch.tensor(action_mask, dtype=torch.bool)}, info
@@ -113,5 +108,5 @@ class MaskedMinesweeperEnv(gym.Wrapper):
 register(
     id='Minesweeper-v0',
     entry_point='Minesweeper_env:MinesweeperEnv',
-    max_episode_steps=100,
+    max_episode_steps=54,
 )
