@@ -2,7 +2,6 @@ import gymnasium as gym
 import numpy as np
 import Minesweeper as ms
 from gymnasium.envs.registration import register
-import torch
 
 diff = ms.Difficulty.BEGINNER
 
@@ -12,7 +11,7 @@ class MinesweeperEnv(gym.Env):
         self.board = ms.Board(diff)
         self.action_space = gym.spaces.Discrete(self.board.cols * self.board.rows)
         self.observation_space = gym.spaces.Box(low=-1, high=10, 
-                                                shape=(self.board.cols, self.board.rows), dtype=np.int32)
+                                                shape=(self.board.cols, self.board.rows), dtype=np.float32)
         self.state = self.get_state()
         
     def seed(self, seed=None):
@@ -28,24 +27,18 @@ class MinesweeperEnv(gym.Env):
         info = {'info_key': 'value'}  #Add any relevant info to track  
         return self.state, info
 
-    #action_index = (row * grid_width + col) * num_action_types + action_type 
+    #action_index = row * grid_width + col 
     #Action is encoded by the formula above
     def step(self, action):
         
-        num_action_types = 1  #Only reveal
-        grid_width = self.board.cols 
-        
-       #Decode the action
-        position = action // num_action_types 
-        row = position // grid_width
-        col = position % grid_width
-    
-        if action % num_action_types == 0:
-            self.board.clearTile(row, col)
-        #else:
-        #   self.board.flagTile(row, col) #Flagging not implemented
+        row = action // self.board.cols
+        col = action % self.board.cols
 
-        reward, done = self.calculate_reward()
+        before = self.get_state()
+        self.board.clearTile(row, col)
+        after = self.get_state()
+
+        reward, done = self.calculate_reward(before, after)
         self.state = self.get_state()
             
         return self.state, reward, done, False, {}
@@ -54,7 +47,8 @@ class MinesweeperEnv(gym.Env):
         #Create a numerical representation of the board state
         return self.board.getTileValues()
 
-    def calculate_reward(self):
+    #Does not take into account amount of tiles cleared
+    def calculate_reward(self, before, after):
         reward = 0
         done = False
 
@@ -67,7 +61,8 @@ class MinesweeperEnv(gym.Env):
             reward = 1.0
             done = True
         else:
-            reward = 0.1
+            cleared_tiles = np.count_nonzero(before == 9) - np.count_nonzero(after == 9)
+            reward += cleared_tiles * 0.1
 
         return reward, done
 
@@ -96,14 +91,12 @@ class MaskedMinesweeperEnv(gym.Wrapper):
     def step(self, action):      
         obs, reward, done, info, truncated = self.env.unwrapped.step(action)
         action_mask = self.get_action_mask()
-        return {"obs": torch.tensor(obs, dtype=torch.int32), 
-                "action_mask": torch.tensor(action_mask, dtype=torch.bool)}, reward, done, info, truncated
+        return {"obs": obs, "action_mask": action_mask}, reward, done, info, truncated
     
     def reset(self, seed=None, options=None):
         obs, info = self.env.unwrapped.reset()
         action_mask = self.get_action_mask()
-        return {"obs": torch.tensor(obs, dtype=torch.int32), 
-                "action_mask": torch.tensor(action_mask, dtype=torch.bool)}, info
+        return {"obs": obs, "action_mask":action_mask}, info
     
 register(
     id='Minesweeper-v0',

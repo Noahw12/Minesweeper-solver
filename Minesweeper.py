@@ -149,9 +149,9 @@ class Board:
 
                     #Check bounds and if the tile has not been visited
                     if 0 <= nx < self.rows and 0 <= ny < self.cols and (nx, ny) not in visited:
+                        visited.add((nx, ny))
                         self.clearTile(nx,ny)  #Process the tile
                         if self.getTile(nx,ny).getValue() == 0:
-                            visited.add((nx, ny))
                             queue.append((nx, ny))
         elif tileVal == -1:
             self.game_status = BoardState.LOST
