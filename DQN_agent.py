@@ -8,7 +8,8 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.dqn.policies import DQNPolicy, CnnPolicy
+from stable_baselines3.dqn.policies import CnnPolicy
+from stable_baselines3.common.callbacks import BaseCallback
 
 class QNetworkBeginner(BaseFeaturesExtractor):
     def __init__(self, observation_space, features_dim):
@@ -19,13 +20,13 @@ class QNetworkBeginner(BaseFeaturesExtractor):
             nn.ReLU(),
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
-            #nn.ReLU(),
-            # nn.Conv2d(256, 256, kernel_size=3, padding=1),
-            nn.Flatten(),
-            nn.Linear(8 * 8 * 256, 1024), #8x8 tiles, 128 filter from conv layer
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Linear(1024, 512),
+            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.Flatten(),
+            nn.Linear(8 * 8 * 128, 512), #8x8 tiles, 128 filter from conv layer
+            nn.ReLU(),
+            nn.Linear(512, 512),
             nn.ReLU(),
             nn.Linear(512, 256),
             nn.ReLU(),
@@ -78,8 +79,24 @@ class QNetworkIntermediate(BaseFeaturesExtractor):
 class QNetworkExpert(BaseFeaturesExtractor):
     pass  
 
+class WarmUpCallback(BaseCallback):
+    def __init__(self, warm_up_steps, verbose=0):
+        super(WarmUpCallback, self).__init__(verbose)
+        self.warm_up_steps = warm_up_steps
+        #self.steps = 0
+
+    def _on_training_start(self):
+        # Perform warm-up actions without training
+        for _ in range(self.warm_up_steps):
+            action, _states = self.model.predict(self.model.env.observation_space.sample())
+            new_obs, reward, done, info = self.model.env.step(action)
+            self.model.replay_buffer.add(self.model.env.last_observation, new_obs, action, reward, done)
+            
+    def _on_step(self):
+        return super()._on_step()
+
 def lr_schedule(progress_remaining):
-    return 0.001 + (0.01 - 0.001) * progress_remaining
+    return 0.0001 + (0.001 - 0.0001) * progress_remaining
 
 def make_masked_env():
     env = gymnasium.make('Minesweeper-v0')  
@@ -91,9 +108,11 @@ model = DQN(ActionMaskPolicy, vec_env, learning_rate=lr_schedule, verbose=True, 
             batch_size=64, gamma=0.99, exploration_fraction=0.5                                                                                       , 
             exploration_initial_eps=1.0, exploration_final_eps=0.05)
 
-model.learn(total_timesteps=1000000)
+warm_up_callback = WarmUpCallback(1000)
 
-mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=10)
+model.learn(total_timesteps=100000, callback=warm_up_callback)
+
+mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=128)
 print(f"Mean reward: {mean_reward} +/- {std_reward}")
 
 #model.save("dqn_minesweeper")
@@ -101,3 +120,5 @@ print(f"Mean reward: {mean_reward} +/- {std_reward}")
 #Exploration rate
 #num channels
 #More conv layers
+#DDQN
+#Prioritized experience replay
