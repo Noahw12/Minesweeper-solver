@@ -34,21 +34,19 @@ class MinesweeperEnv(gym.Env):
         row = action // self.board.cols
         col = action % self.board.cols
 
-        before = self.get_state()
-        self.board.clearTile(row, col)
-        after = self.get_state()
+        old_state = self.get_state()
+        tile_val = self.board.clear_tile(row, col)
+        new_state = self.get_state()
 
-        reward, done = self.calculate_reward(before, after)
-        self.state = self.get_state()
+        reward, done = self.calculate_reward(tile_val, old_state, new_state)
             
-        return self.state, reward, done, False, {}
+        return new_state, reward, done, False, {}
 
     def get_state(self):
         #Create a numerical representation of the board state
-        return self.board.getTileValues()
+        return self.board.get_tile_values()
 
-    #Does not take into account amount of tiles cleared
-    def calculate_reward(self, before, after):
+    def calculate_reward(self, tile_val, old_state, new_state):
         reward = 0
         done = False
 
@@ -60,14 +58,16 @@ class MinesweeperEnv(gym.Env):
             #All non-mine tiles were cleared
             reward = 1.0
             done = True
-        else:
-            cleared_tiles = np.count_nonzero(before == 9) - np.count_nonzero(after == 9)
+        elif tile_val == 0:
+            cleared_tiles = np.count_nonzero(old_state == 9) - np.count_nonzero(new_state == 9)
             reward += cleared_tiles * 0.1
+        else:
+            reward += 0.1
 
         return reward, done
 
     def render(self):
-        self.board.nicePrint() 
+        self.board.nice_print() 
         
 class MaskedMinesweeperEnv(gym.Wrapper):
     def __init__(self, env):
@@ -78,7 +78,7 @@ class MaskedMinesweeperEnv(gym.Wrapper):
         })
         
     def get_valid_actions(self):
-        valid_positions = np.argwhere(self.env.unwrapped.board.getTileValues() == 9)
+        valid_positions = np.argwhere(self.env.unwrapped.board.get_tile_values() == 9)
         valid_actions = valid_positions[:, 0] * self.env.unwrapped.board.cols + valid_positions[:, 1]
         return valid_actions
     
@@ -96,7 +96,7 @@ class MaskedMinesweeperEnv(gym.Wrapper):
     def reset(self, seed=None, options=None):
         obs, info = self.env.unwrapped.reset()
         action_mask = self.get_action_mask()
-        return {"obs": obs, "action_mask":action_mask}, info
+        return {"obs": obs, "action_mask": action_mask}, info
     
 register(
     id='Minesweeper-v0',
