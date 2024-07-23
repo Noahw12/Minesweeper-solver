@@ -36,7 +36,8 @@ class QNetworkBeginner(BaseFeaturesExtractor):
         )   
     
     def forward(self, observation):
-        return self.conv(observation['obs'].unsqueeze(1))
+        print("Shape before unsqueeze:", observation.shape)
+        return self.conv(observation.unsqueeze(1))
 
 class ActionMaskPolicy(CnnPolicy):
     def __init__(self, observation_space, action_space, lr_schedule, features_dim=128):
@@ -60,7 +61,7 @@ class ActionMaskPolicy(CnnPolicy):
         obs_tensor = {'obs': torch.as_tensor(observation['obs'], device=self.device, dtype=torch.float32), 
                       'action_mask': torch.as_tensor(observation['action_mask'], device=self.device, dtype=torch.bool)}
         
-        q_values = self.q_net(obs_tensor)
+        q_values = self.q_net(obs_tensor['obs'])
         masked_q_values = torch.where(obs_tensor['action_mask'], q_values, torch.tensor(float('-inf')).to(q_values.device))
         return masked_q_values 
     
@@ -141,35 +142,42 @@ class DDQN(DQN):
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size, observation_space, action_space, device, alpha, n_envs, **kwargs):
-        
         super(PrioritizedReplayBuffer, self).__init__(buffer_size, observation_space=observation_space['obs'], 
                                                       action_space=action_space, device=device, n_envs=n_envs, **kwargs)
         self.alpha = alpha  #Controls the amount of prioritization used 
         self.priorities = np.zeros((self.buffer_size,), dtype=np.float32)
 
-    def add(self, obs, next_obs, action, reward, done, infos):
-        
-        extracted_obs = obs['obs']
-        extracted_next_obs = next_obs['obs']
-        super().add(extracted_obs, extracted_next_obs, action, reward, done, infos)
+    #TODO this should calculate td-error
+    def add(self, obs, next_obs, action, reward, done, info):
+        super().add(obs['obs'], next_obs['obs'], action, reward, done, info)
         max_priority = self.priorities.max() if self.full else self.priorities[:self.pos].max()
         max_priority = max_priority if max_priority > 0 else 1.0  #Avoid 0 priority
-        self.priorities[self.pos - 1] = max_priority
+        self.priorities[self.pos - 1] = max_priority  
 
     def _sample_proportional(self, batch_size):
-        total_priority = self.priorities.sum()
-        sampled_indices = np.random.choice(self.size(), batch_size, p=self.priorities[:self.size()] / total_priority)
+        if self.full:
+            #The buffer is full, we can sample from the entire buffer
+            total_priority = self.priorities.sum()
+            sampled_indices = np.random.choice(self.buffer_size, batch_size, p=self.priorities / total_priority)
+        else:
+            #The buffer is not full, sample only up to self.pos to avoid uninitialized data
+            total_priority = self.priorities[:self.pos].sum()
+            sampled_indices = np.random.choice(self.pos, batch_size, p=self.priorities[:self.pos] / total_priority)
         return sampled_indices
 
     def sample(self, batch_size, env=None):
-        indices = self._sample_proportional(batch_size)
-        print(torch.tensor(self.observations[indices]).shape)
-        data = (self.observations[indices],
-            self.actions[indices],
-            self.rewards[indices],
-            self.next_observations[indices],
-            self.dones[indices])  
-        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))    
+        batch_indices = self._sample_proportional(batch_size)
+        env_indices = np.random.randint(0, high=self.n_envs, size=(batch_size,))
+        
+        data = (
+            self._normalize_obs(self.observations[batch_indices, env_indices, :], env),
+            self.actions[batch_indices, env_indices, :],
+            self._normalize_obs(self.next_observations[batch_indices, env_indices, :], env),
+            (self.dones[batch_indices, env_indices] * (1 - self.timeouts[batch_indices, env_indices])).reshape(-1, 1),
+            self._normalize_reward(self.rewards[batch_indices, env_indices].reshape(-1, 1), env),
+        )  
+        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))  
+        
 
 def lr_schedule(progress_remaining):
     return 0.0001 + (0.001 - 0.0001) * progress_remaining
@@ -182,7 +190,7 @@ vec_env = make_vec_env(make_masked_env, n_envs=16)
 
 model = DDQN(ActionMaskPolicy, vec_env, learning_rate=lr_schedule, verbose=True, buffer_size=75000, 
             batch_size=64, gamma=0.99, exploration_fraction=0.4 , exploration_initial_eps=1.0, 
-            exploration_final_eps=0.05, replay_buffer_class=PrioritizedReplayBuffer, replay_buffer_kwargs={'alpha': 0.6})
+            exploration_final_eps=0.05, replay_buffer_class=PrioritizedReplayBuffer, replay_buffer_kwargs={'alpha':0.6})
 
 #warm_up_callback = WarmUpCallback(32500)
 
@@ -190,8 +198,6 @@ model.learn(total_timesteps=100000)
 
 mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=1000)
 print(f"Mean reward: {mean_reward} +/- {std_reward}")
-
-#model.save("dqn_minesweeper")
 
 #TODO
 #Prioritized experience replay
