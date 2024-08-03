@@ -36,7 +36,7 @@ class QNetworkBeginner(BaseFeaturesExtractor):
         )   
     
     def forward(self, observation):
-        print("Shape before unsqueeze:", observation.shape)
+        #print("Shape before unsqueeze:", observation.shape)
         return self.conv(observation.unsqueeze(1))
 
 class ActionMaskPolicy(CnnPolicy):
@@ -112,7 +112,7 @@ class DDQN(DQN):
         
         for _ in range(gradient_steps):
             #Sample replay buffer
-            replay_data = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+            replay_data, batch_indices, env_indices = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
             
             with torch.no_grad():
                 #Compute the next Q-values using the target network
@@ -120,13 +120,21 @@ class DDQN(DQN):
                 next_q_values_online = self.q_net(replay_data.next_observations)
                 next_actions = next_q_values_online.argmax(dim=1, keepdim=True)
                 next_q_values = torch.gather(next_q_values, dim=1, index=next_actions).squeeze(1)
-                
                 #Expected Q values
                 target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
             
             #Get current Q-values estimates
             current_q_values = self.q_net(replay_data.observations)
             current_q_values = torch.gather(current_q_values, dim=1, index=replay_data.actions.long()).squeeze(1)
+            
+            # Compute TD-error for updating the priorities in the PER buffer
+            td_errors = torch.abs(current_q_values - target_q_values).detach().cpu().numpy()
+            
+            print(batch_indices.shape)
+            print(env_indices.shape)
+            print(td_errors.shape)
+            # Update the priorities in the replay buffer
+            self.replay_buffer.update_priorities(batch_indices, env_indices, td_errors)
             
             #Compute Huber loss (less sensitive to outliers)
             loss = nn.functional.smooth_l1_loss(current_q_values, target_q_values)
@@ -139,35 +147,41 @@ class DDQN(DQN):
         # Update target network
         if self.gradient_steps % self.target_update_interval == 0:
             polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), self.tau)
+            
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size, observation_space, action_space, device, alpha, n_envs, **kwargs):
         super(PrioritizedReplayBuffer, self).__init__(buffer_size, observation_space=observation_space['obs'], 
                                                       action_space=action_space, device=device, n_envs=n_envs, **kwargs)
         self.alpha = alpha  #Controls the amount of prioritization used 
-        self.priorities = np.zeros((self.buffer_size,), dtype=np.float32)
+        self.priorities = np.zeros((max(buffer_size // n_envs, 1), n_envs), dtype=np.float32)
 
-    #TODO this should calculate td-error
     def add(self, obs, next_obs, action, reward, done, info):
         super().add(obs['obs'], next_obs['obs'], action, reward, done, info)
         max_priority = self.priorities.max() if self.full else self.priorities[:self.pos].max()
         max_priority = max_priority if max_priority > 0 else 1.0  #Avoid 0 priority
         self.priorities[self.pos - 1] = max_priority  
-
+    
+    #TODO np.random.coice not top inclusive?
     def _sample_proportional(self, batch_size):
         if self.full:
-            #The buffer is full, we can sample from the entire buffer
-            total_priority = self.priorities.sum()
-            sampled_indices = np.random.choice(self.buffer_size, batch_size, p=self.priorities / total_priority)
+            #The buffer is full, we can sample from the entire buffer   
+            flat_priorities = self.priorities.flatten()
+            total_priority = flat_priorities.sum()
+            sampled_indices = np.random.choice(self.buffer_size * self.n_envs , batch_size, p=flat_priorities / total_priority)
         else:
             #The buffer is not full, sample only up to self.pos to avoid uninitialized data
-            total_priority = self.priorities[:self.pos].sum()
-            sampled_indices = np.random.choice(self.pos, batch_size, p=self.priorities[:self.pos] / total_priority)
-        return sampled_indices
+            flat_priorities = self.priorities[:self.pos].flatten()
+            total_priority = flat_priorities.sum()
+            sampled_indices = np.random.choice(self.pos * self.n_envs, batch_size, p=flat_priorities / total_priority)
+            
+        batch_indices = sampled_indices // self.n_envs
+        env_indices = sampled_indices % self.n_envs
+            
+        return batch_indices, env_indices
 
     def sample(self, batch_size, env=None):
-        batch_indices = self._sample_proportional(batch_size)
-        env_indices = np.random.randint(0, high=self.n_envs, size=(batch_size,))
+        batch_indices, env_indices = self._sample_proportional(batch_size)
         
         data = (
             self._normalize_obs(self.observations[batch_indices, env_indices, :], env),
@@ -176,7 +190,12 @@ class PrioritizedReplayBuffer(ReplayBuffer):
             (self.dones[batch_indices, env_indices] * (1 - self.timeouts[batch_indices, env_indices])).reshape(-1, 1),
             self._normalize_reward(self.rewards[batch_indices, env_indices].reshape(-1, 1), env),
         )  
-        return ReplayBufferSamples(*tuple(map(self.to_torch, data)))  
+        return ReplayBufferSamples(*tuple(map(self.to_torch, data))), batch_indices, env_indices
+    
+    #TODO fix update of priorities
+    def update_priorities(self, batch_indices, env_indices, td_errors):
+        for batch_idx, env_idx, td_error in zip(batch_indices, env_indices, td_errors):
+            self.priorities[batch_idx, env_idx] = td_error ** self.alpha
         
 
 def lr_schedule(progress_remaining):
