@@ -121,19 +121,17 @@ class DDQN(DQN):
                 next_actions = next_q_values_online.argmax(dim=1, keepdim=True)
                 next_q_values = torch.gather(next_q_values, dim=1, index=next_actions).squeeze(1)
                 #Expected Q values
-                target_q_values = replay_data.rewards + (1 - replay_data.dones) * self.gamma * next_q_values
+                rewards = replay_data.rewards.squeeze(1)
+                dones =  replay_data.dones.squeeze(1)
+                target_q_values = rewards + (1 - dones ) * self.gamma * next_q_values
             
             #Get current Q-values estimates
             current_q_values = self.q_net(replay_data.observations)
             current_q_values = torch.gather(current_q_values, dim=1, index=replay_data.actions.long()).squeeze(1)
-            
+        
             # Compute TD-error for updating the priorities in the PER buffer
             td_errors = torch.abs(current_q_values - target_q_values).detach().cpu().numpy()
             
-            print(batch_indices.shape)
-            print(env_indices.shape)
-            print(td_errors.shape)
-            # Update the priorities in the replay buffer
             self.replay_buffer.update_priorities(batch_indices, env_indices, td_errors)
             
             #Compute Huber loss (less sensitive to outliers)
@@ -162,13 +160,12 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         max_priority = max_priority if max_priority > 0 else 1.0  #Avoid 0 priority
         self.priorities[self.pos - 1] = max_priority  
     
-    #TODO np.random.coice not top inclusive?
     def _sample_proportional(self, batch_size):
         if self.full:
             #The buffer is full, we can sample from the entire buffer   
             flat_priorities = self.priorities.flatten()
             total_priority = flat_priorities.sum()
-            sampled_indices = np.random.choice(self.buffer_size * self.n_envs , batch_size, p=flat_priorities / total_priority)
+            sampled_indices = np.random.choice(self.buffer_size * self.n_envs, batch_size, p=flat_priorities / total_priority)
         else:
             #The buffer is not full, sample only up to self.pos to avoid uninitialized data
             flat_priorities = self.priorities[:self.pos].flatten()
@@ -205,21 +202,41 @@ def make_masked_env():
     env = gymnasium.make('Minesweeper-v0')  
     return MaskedMinesweeperEnv(env)
 
-vec_env = make_vec_env(make_masked_env, n_envs=16)
+buffer_size = 75000
+batch_size = 64
+gamma = 0.99
+expl_fract = 0.4
+expl_init = 1.0
+expl_fin = 0.05
+alpha = 0.6
+timesteps = 1000000
+envs = 16
 
-model = DDQN(ActionMaskPolicy, vec_env, learning_rate=lr_schedule, verbose=True, buffer_size=75000, 
-            batch_size=64, gamma=0.99, exploration_fraction=0.4 , exploration_initial_eps=1.0, 
-            exploration_final_eps=0.05, replay_buffer_class=PrioritizedReplayBuffer, replay_buffer_kwargs={'alpha':0.6})
+vec_env = make_vec_env(make_masked_env, n_envs=envs)
+
+model = DDQN(
+    ActionMaskPolicy, 
+    vec_env, 
+    learning_rate=lr_schedule, 
+    verbose=True, 
+    buffer_size=buffer_size, 
+    batch_size=batch_size, 
+    gamma=gamma, 
+    exploration_fraction=expl_fract,
+    exploration_initial_eps=expl_init, 
+    exploration_final_eps=expl_fin, 
+    replay_buffer_class=PrioritizedReplayBuffer, 
+    replay_buffer_kwargs={'alpha':alpha}
+    )
 
 #warm_up_callback = WarmUpCallback(32500)
 
-model.learn(total_timesteps=100000)
+model.learn(total_timesteps=timesteps)
 
 mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=1000)
 print(f"Mean reward: {mean_reward} +/- {std_reward}")
 
 #TODO
-#Prioritized experience replay
 #Warmup callback
 
 #POTENTIAL improvements
