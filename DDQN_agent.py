@@ -9,38 +9,36 @@ from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.dqn.policies import CnnPolicy
-from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.buffers import ReplayBuffer, ReplayBufferSamples
 from stable_baselines3.common.utils import polyak_update
+import sys
 
 class QNetworkBeginner(BaseFeaturesExtractor):
     def __init__(self, observation_space, features_dim):
         super(QNetworkBeginner,self).__init__(observation_space, features_dim)
       
         self.conv = nn.Sequential(
-            nn.Conv2d(1,64,kernel_size=3, padding=1),
+            nn.Conv2d(1,features_dim, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.Conv2d(features_dim, features_dim, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
+            nn.Conv2d(features_dim, features_dim, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.Flatten(),
-            nn.Linear(8 * 8 * 128, 512), #8x8 tiles, 128 filter from conv layer
+            nn.Conv2d(features_dim, features_dim, kernel_size=3, padding=1),
             nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, features_dim)
         )   
     
     def forward(self, observation):
-        #print("Shape before unsqueeze:", observation.shape)
         return self.conv(observation.unsqueeze(1))
+    
+class QNetworkIntermediate(BaseFeaturesExtractor):
+    pass
+
+class QNetworkExpert(BaseFeaturesExtractor):
+    pass  
 
 class ActionMaskPolicy(CnnPolicy):
-    def __init__(self, observation_space, action_space, lr_schedule, features_dim=128):
+    def __init__(self, observation_space, action_space, lr_schedule, features_dim=64):
         super(ActionMaskPolicy, self).__init__(
             observation_space=observation_space,
             action_space=action_space,
@@ -51,11 +49,12 @@ class ActionMaskPolicy(CnnPolicy):
         self.features_extractor = QNetworkBeginner(observation_space, features_dim)
         self.q_net = nn.Sequential(
             self.features_extractor,
-            nn.Linear(features_dim, action_space.n), #64 tiles
+            nn.Conv2d(features_dim, 1, kernel_size=1, padding=0),
+            nn.Flatten()
+            
         )
         self.q_net_target = deepcopy(self.q_net)
             
-    
     def forward(self, observation, *args, **kwargs):
 
         obs_tensor = {'obs': torch.as_tensor(observation['obs'], device=self.device, dtype=torch.float32), 
@@ -63,6 +62,8 @@ class ActionMaskPolicy(CnnPolicy):
         
         q_values = self.q_net(obs_tensor['obs'])
         masked_q_values = torch.where(obs_tensor['action_mask'], q_values, torch.tensor(float('-inf')).to(q_values.device))
+        print(masked_q_values.shape)
+        print(type(masked_q_values))
         return masked_q_values 
     
     def predict(self, observation, state=None, episode_start=None, deterministic=True):
@@ -75,30 +76,6 @@ class ActionMaskPolicy(CnnPolicy):
     
     def set_training_mode(self, mode):
         self.train(mode)
-    
-class QNetworkIntermediate(BaseFeaturesExtractor):
-    pass
-
-class QNetworkExpert(BaseFeaturesExtractor):
-    pass  
-
-# class WarmUpCallback(BaseCallback):
-#     def __init__(self, warm_up_steps, verbose=0):
-#         super(WarmUpCallback, self).__init__(verbose)
-#         self.warm_up_steps = warm_up_steps
-
-#     def _on_training_start(self):
-#         #Perform warm-up actions without training
-#         for _ in range(self.warm_up_steps):
-#             obs = self.model.env.observation_space.sample()
-#             action, _ = self.model.predict(obs)
-#             new_obs, reward, done, _ = self.model.env.step(action)
-#             # Prepare the new observation in the required format
-#             self.model.replay_buffer.add(obs, new_obs, action, reward, done)
-         
-            
-#     def _on_step(self):
-#         return super()._on_step()
 
 class DDQN(DQN):
     def __init__(self, *args, **kwargs):
@@ -145,7 +122,6 @@ class DDQN(DQN):
         # Update target network
         if self.gradient_steps % self.target_update_interval == 0:
             polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), self.tau)
-            
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size, observation_space, action_space, device, alpha, n_envs, **kwargs):
@@ -189,35 +165,40 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         )  
         return ReplayBufferSamples(*tuple(map(self.to_torch, data))), batch_indices, env_indices
     
-    #TODO fix update of priorities
     def update_priorities(self, batch_indices, env_indices, td_errors):
         for batch_idx, env_idx, td_error in zip(batch_indices, env_indices, td_errors):
             self.priorities[batch_idx, env_idx] = td_error ** self.alpha
         
-
 def lr_schedule(progress_remaining):
-    return 0.0001 + (0.001 - 0.0001) * progress_remaining
+    return 0.00025 + (0.001 - 0.00025) * progress_remaining
 
 def make_masked_env():
     env = gymnasium.make('Minesweeper-v0')  
     return MaskedMinesweeperEnv(env)
 
-buffer_size = 75000
+buffer_size = 100000
 batch_size = 64
 gamma = 0.99
-expl_fract = 0.4
+expl_fract = 0.5
 expl_init = 1.0
 expl_fin = 0.05
 alpha = 0.6
-timesteps = 1000000
+timesteps = 1100000
 envs = 16
+lr = lr_schedule
+tau = 1
+
+#TODO tune and use these parameters
+target_update_interval = 0
+train_freq = 0
+gradient_steps = 0
 
 vec_env = make_vec_env(make_masked_env, n_envs=envs)
 
 model = DDQN(
     ActionMaskPolicy, 
     vec_env, 
-    learning_rate=lr_schedule, 
+    learning_rate=lr, 
     verbose=True, 
     buffer_size=buffer_size, 
     batch_size=batch_size, 
@@ -226,20 +207,27 @@ model = DDQN(
     exploration_initial_eps=expl_init, 
     exploration_final_eps=expl_fin, 
     replay_buffer_class=PrioritizedReplayBuffer, 
-    replay_buffer_kwargs={'alpha':alpha}
+    replay_buffer_kwargs={'alpha': alpha},
+    #learning_starts=buffer_size,
+    tau=tau
     )
-
-#warm_up_callback = WarmUpCallback(32500)
 
 model.learn(total_timesteps=timesteps)
 
-mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=1000)
+mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=10000)
 print(f"Mean reward: {mean_reward} +/- {std_reward}")
 
-#TODO
-#Warmup callback
+# :param target_update_interval: update the target network every ``target_update_interval``
+#         environment steps.
+# :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
+#         like ``(5, "step")`` or ``(2, "episode")``.
+# :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
+#         Set to ``-1`` means to do as many gradient steps as steps done in the environment
+#         during the rollout.
 
-#POTENTIAL improvements
-#Num channels
-#more conv layers
-#Normalize
+#TODO
+#1. nätverken i min actionmask policy är fel, fixa den klassen 
+#   (behöver det normalizeras som med bilder?)
+#2. Updating networks
+#3. öka antalet channels? one hot encoding
+#4. Reward structure

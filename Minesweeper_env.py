@@ -20,7 +20,7 @@ class MinesweeperEnv(gym.Env):
         return [seed]  #Return the list of seeds used in your environment
 
     def reset(self, seed=None, options=None):
-        print(self.board.game_status)
+        #print(self.board.game_status)
         self.seed(seed)
         self.board = ms.Board(diff) #Reinitialize the board
         self.state = self.get_state()
@@ -58,9 +58,9 @@ class MinesweeperEnv(gym.Env):
             #All non-mine tiles were cleared
             reward = 1.0
             done = True
-        elif tile_val == 0:
-            cleared_tiles = np.count_nonzero(old_state == 9) - np.count_nonzero(new_state == 9)
-            reward += cleared_tiles * 0.1
+        # elif tile_val == 0:
+        #     cleared_tiles = np.count_nonzero(old_state == 9) - np.count_nonzero(new_state == 9)
+        #     reward += cleared_tiles * 0.1
         else:
             reward += 0.1
 
@@ -97,9 +97,14 @@ class MaskedMinesweeperEnv(gym.Wrapper):
         obs, info = self.env.unwrapped.reset()
         action_mask = self.get_action_mask()
         return {"obs": obs, "action_mask": action_mask}, info
-    
+
+# Rows* Columns - Mines
+beginner_max_steps = 8*8 - 10
+intermediate_max_steps = 16*16 - 40
+expert_max_steps = 16*30 - 99
+
 register(
     id='Minesweeper-v0',
     entry_point='Minesweeper_env:MinesweeperEnv',
-    max_episode_steps=54,
+    max_episode_steps=beginner_max_steps,
 )
