@@ -17,8 +17,11 @@ class Tile:
         self.trueValue = newValue
        
     def clear(self):
-        self.value = self.trueValue
-        return self.value
+        if self.trueValue == -1:
+            return self.trueValue
+        else:
+            self.value = self.trueValue
+            return self.value
     
     def flag(self):
         self.value = 10
@@ -160,7 +163,6 @@ class Board:
         elif tile_value == 0:
             self.read_tiles(row, col)
         self.win_check()
-        return tile_value
             
     def flag_tile(self, row, col):
         self.get_tile(row,col).flag()
