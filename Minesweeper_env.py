@@ -20,11 +20,10 @@ class MinesweeperEnv(gym.Env):
         return [seed]  #Return the list of seeds used in your environment
 
     def reset(self, seed=None, options=None):
-        #print(self.board.game_status)
+        info = {'Result': self.board.game_status}  
         self.seed(seed)
         self.board = ms.Board(diff) #Reinitialize the board
         self.state = self.get_state()
-        info = {'info_key': 'value'}  #TODO Add any relevant info to track (win or loss)
         return self.state, info
 
     #action_index = row * grid_width + col 

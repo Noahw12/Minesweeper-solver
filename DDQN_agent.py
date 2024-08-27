@@ -168,22 +168,20 @@ def make_env():
     env = gymnasium.make('Minesweeper-v0')  
     return env 
 
-buffer_size = 100000
+buffer_size = 10000
 batch_size = 64
 gamma = 0.99
-expl_fract = 0.5
+expl_fract = 0.7
 expl_init = 1.0
 expl_fin = 0.05
 alpha = 0.6
-timesteps = 1000000 + buffer_size
+timesteps = 100000 + buffer_size
 envs = 16
 lr = lr_schedule
 tau = 1
-
-#TODO tune and use these parameters
-target_update_interval = 0
-train_freq = 0
-gradient_steps = 0
+target_update_interval = 2048
+train_freq = (1, "step")
+gradient_steps = 8
 
 vec_env = make_vec_env(make_env, n_envs=envs)
 
@@ -200,7 +198,10 @@ model = DDQN(
     exploration_final_eps=expl_fin, 
     replay_buffer_class=PrioritizedReplayBuffer, 
     replay_buffer_kwargs={'alpha': alpha},
-    #learning_starts=buffer_size,
+    learning_starts=buffer_size,
+    target_update_interval=target_update_interval,
+    gradient_steps=gradient_steps,
+    train_freq=train_freq,
     tau=tau
     )
 
@@ -210,13 +211,4 @@ mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episode
 print(f"Mean reward: {mean_reward} +/- {std_reward}")
 
 #TODO
-#2. Updating networks
-    # :param target_update_interval: update the target network every ``target_update_interval``
-    #         environment steps.
-    # :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
-    #         like ``(5, "step")`` or ``(2, "episode")``.
-    # :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
-    #         Set to ``-1`` means to do as many gradient steps as steps done in the environment
-    #         during the rollout.
-
 #4. Reward structure
