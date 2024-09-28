@@ -1,0 +1,104 @@
+class ActionMaskPolicy(CnnPolicy):
+    def __init__(self, observation_space, action_space, lr_schedule, features_dim=64):
+        super(ActionMaskPolicy, self).__init__(
+            observation_space=observation_space,
+            action_space=action_space,
+            lr_schedule=lr_schedule,
+            features_extractor_class=QNetworkBeginner,
+            features_extractor_kwargs={'features_dim': features_dim},
+        )
+        self.features_extractor = QNetworkBeginner(observation_space, features_dim)
+        self.q_net = nn.Sequential(
+            self.features_extractor,
+            nn.Conv2d(features_dim, 1, kernel_size=1, padding=0),
+            nn.Flatten()
+            
+        )
+        self.q_net_target = deepcopy(self.q_net)
+            
+    def forward(self, observation, *args, **kwargs):
+
+        obs_tensor = {'obs': torch.as_tensor(observation['obs'], device=self.device, dtype=torch.float32), 
+                      'action_mask': torch.as_tensor(observation['action_mask'], device=self.device, dtype=torch.bool)}
+        
+        q_values = self.q_net(obs_tensor['obs'])
+        masked_q_values = torch.where(obs_tensor['action_mask'], q_values, torch.tensor(float('-inf')).to(q_values.device))
+        print(masked_q_values.shape)
+        print(type(masked_q_values))
+        return masked_q_values 
+    
+    def predict(self, observation, state=None, episode_start=None, deterministic=True):
+        obs_tensor = {'obs': torch.as_tensor(observation['obs'], device=self.device, dtype=torch.float32),
+                      'action_mask': torch.as_tensor(observation['action_mask'], device=self.device, dtype=torch.bool)}
+        
+        q_values = self.forward(obs_tensor)
+        action = torch.argmax(q_values, dim=1)
+        return action.cpu().numpy(), state
+    
+    def set_training_mode(self, mode):
+        self.train(mode)
+
+
+env 
+
+class MaskedMinesweeperEnv(gym.Wrapper):
+    def __init__(self, env):
+        super(MaskedMinesweeperEnv, self).__init__(env)
+        self.observation_space = gym.spaces.Dict({
+            "obs": env.observation_space,
+            "action_mask": gym.spaces.Box(low=0, high=1, shape=(self.env.action_space.n,), dtype=bool)
+        })
+        
+    def get_valid_actions(self):
+        valid_positions = np.argwhere(self.env.unwrapped.board.get_tile_values() == 9)
+        valid_actions = valid_positions[:, 0] * self.env.unwrapped.board.cols + valid_positions[:, 1]
+        return valid_actions
+    
+    def get_action_mask(self):
+        mask = np.zeros(self.env.unwrapped.action_space.n, dtype=bool)
+        valid_actions = self.get_valid_actions()
+        mask[valid_actions] = True
+        return mask
+        
+    def step(self, action):      
+        obs, reward, done, info, truncated = self.env.unwrapped.step(action)
+        action_mask = self.get_action_mask()
+        return {"obs": obs, "action_mask": action_mask}, reward, done, info, truncated
+    
+    def reset(self, seed=None, options=None):
+        obs, info = self.env.unwrapped.reset()
+        action_mask = self.get_action_mask()
+        return {"obs": obs, "action_mask": action_mask}, info
+
+
+
+1. Reward Structure
+Sparse Rewards: Minesweeper is a game with sparse rewards. The agent only receives a positive reward when it wins and a negative reward when it loses. During most of the steps, it receives a small positive reward (e.g., 0.1). This could lead to a situation where the agent does not learn effectively because it doesn’t get enough feedback to distinguish between good and bad actions.
+Recommendation: Consider adjusting the reward structure. For example, you might give a slightly positive reward for each safe tile the agent clears and penalize it slightly more for unsafe actions (e.g., exploring uncertain tiles).
+2. Action Masking
+Action Masking: The current implementation uses an action mask to ensure the agent only considers legal actions (non-cleared tiles). However, the way it's implemented might cause the learning process to fail due to the drastic effect on the Q-values.
+Recommendation: Ensure the action masking is applied correctly. Consider normalizing or adjusting the Q-values after masking to avoid excessively negative values, which can lead to numerical instability during training.
+3. Exploration Strategy
+Exploration: The exploration strategy may not be sufficient, especially in a complex environment like Minesweeper. The agent might not be exploring the environment enough to gather valuable experience.
+Recommendation: You could experiment with different exploration strategies, such as an ε-greedy policy with a more gradual decay or even explore different exploration techniques like NoisyNet or Boltzmann exploration.
+4. Network Architecture
+Feature Extractor: The architecture of the neural network might not be complex enough to capture the nuances of the Minesweeper environment. A small convolutional network might struggle with this task, especially since the board state requires understanding spatial relationships between tiles.
+Recommendation: Consider expanding the network's complexity, adding more layers, increasing the number of filters in the convolutional layers, or experimenting with residual connections.
+5. Learning Rate and Other Hyperparameters
+Learning Rate: The learning rate might be too high or too low, leading to either unstable learning or slow convergence.
+Recommendation: Experiment with different learning rates and learning rate schedules. A smaller learning rate might stabilize training.
+6. Target Network Updates
+Polyak Update: If you are using Polyak averaging for target network updates, ensure that tau is set appropriately. A tau of 1 means a full update, which might be too aggressive and could destabilize training.
+Recommendation: Experiment with different tau values, e.g., 0.005 to 0.01, for smoother updates.
+7. Experience Replay
+Prioritized Replay Buffer: While prioritized replay can help, it might also introduce bias if not used carefully, particularly with incorrect prioritization.
+Recommendation: Double-check the implementation of the replay buffer, ensuring that priorities are correctly updated and that the buffer is effectively balancing between high-priority and exploratory samples.
+8. Environment Complexity
+Environment Configuration: The beginner-level environment might still be too complex for the agent to learn effectively within a reasonable timeframe.
+Recommendation: Start with even simpler environments or simplified versions of Minesweeper (e.g., fewer rows, columns, or mines) and gradually increase the complexity as the agent improves.
+9. Evaluation
+Evaluation Method: If your evaluation method isn't thorough, you might not accurately detect whether the agent is learning. Evaluating with just 100 episodes might not be enough in such a sparse reward setting.
+Recommendation: Increase the number of evaluation episodes and also consider monitoring intermediate learning metrics (e.g., average Q-values, loss) to diagnose learning behavior.
+10. Debugging Tips
+Monitor Q-values: Print and monitor the Q-values over time. Look for any signs of divergence, collapse to zero, or other anomalies.
+Visual Debugging: Render the environment occasionally during training to see what actions the agent is taking. This can provide insight into whether the agent is learning any useful strategy.
