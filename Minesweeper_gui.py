@@ -1,76 +1,77 @@
-import pygame
-import Minesweeper as ms
-import time
+import tkinter as tk
+from tkinter import messagebox
 
-class GUI:
+class MineSweeperGUI:
     def __init__(self, board):
-        pygame.init()
-        pygame.mixer.quit()
-        #self.running = True
         self.board = board
-        self.tileSize = 32
-        self.width = self.board.cols * self.tileSize
-        self.height = self.board.rows * self.tileSize
-        self.screen = pygame.display.set_mode((self.width, self.height))
-        self.selectedSurface = pygame.Surface((self.tileSize, self.tileSize))
-        self.selectedSurface.fill((128, 0, 128, 128))
-        self.images = self.init_images()
-        self.clock = pygame.time.Clock().tick(30)
+        self.root = tk.Tk()
+        self.root.title("Minesweeper")
         
+        # Load Images
+        self.images = self.load_images()
         
-    def init_images(self):
-        # Load images and store them as attributes
-        images = {
-            9: pygame.image.load('img/BlankTile.png'),   # Assuming 'blank' for covered tiles
-            0: pygame.image.load('img/0Tile.png'),
-            1: pygame.image.load('img/1Tile.png'),
-            2: pygame.image.load('img/2Tile.png'),
-            3: pygame.image.load('img/3Tile.png'),
-            4: pygame.image.load('img/4Tile.png'),
-            5: pygame.image.load('img/5Tile.png'),
-            6: pygame.image.load('img/6Tile.png'),
-            7: pygame.image.load('img/7Tile.png'),
-            8: pygame.image.load('img/8Tile.png'),
-            -1: pygame.image.load('img/bomb.png'),
-            10: pygame.image.load('img/flag.png')
-        }
-        for key in images:
-            images[key] = pygame.transform.scale(images[key], (32, 32))
+        self.create_grid_frame()
+        
+        # Start the GUI loop
+        self.update_grid_frame()
+        self.root.mainloop()
+
+    def load_images(self):
+        images = {}
+        try:
+            images['BlankTile'] = tk.PhotoImage(file="img/BlankTile.png")
+            images['ExpBomb'] = tk.PhotoImage(file="img/ExplodedBomb.png")
+            images['Bomb'] = tk.PhotoImage(file="img/bomb.png")
+            #Load number images 0-8
+            for i in range(0, 9):
+                images[str(i) + "Tile"] = tk.PhotoImage(file=f"img/{i}Tile.png")
+            return images
+        except Exception as e:
+            messagebox.showerror("Image Loading Error", f"An error occurred while loading images: {e}")
+            self.root.destroy()
             
-        return images
-    
-    def display(self):
-        self.handle_events()
-        self.screen.fill((0, 0, 0))  # Clear the screen
-        
-        for y, row in enumerate(self.board.getTileValues()):
-            for x, tileVal in enumerate(row):
-                image = self.images[tileVal]  # Directly access the image based on tileVal
-                self.screen.blit(image, (x * self.tileSize, y * self.tileSize))
-    
-        pygame.display.flip()  # Update the full display Surface to the screen
-        
-        
-    def handle_events(self):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                self.running = False 
+            
+    def create_grid_frame(self):
+        # Create a Frame to hold the grid of cells
+        self.grid_frame = tk.Frame(self.root)
+        self.grid_frame.pack(padx=5, pady=5)  # Add padding around the grid
+
+        # Initialize a dictionary to store Label widgets with their (row, col) as keys
+        self.labels = {}
+
+        num_rows, num_cols = self.board.shape
+
+        # Iterate over each row and column index to create Label widgets
+        for i in range(num_rows):
+            for j in range(num_cols):
+                # Create a Label widget for each cell
+                lbl = tk.Label(
+                    self.grid_frame,
+                    image=self.images['BlankTile'],  # Set the initial "covered" image
+                    width=16,                        # Set width to match image size
+                    height=16,                       # Set height to match image size
+                    bd=1,                            # Border width for visual separation
+                    relief="raised"                  # Raised relief to indicate covered state
+                )
+
+                # Place the Label in the grid at the specified row and column
+                lbl.grid(row=i, column=j)
+
+                # Store the Label in the labels dictionary with (i, j) as the key
+                self.labels[(i, j)] = lbl
+
+    def update_grid_frame(self):
+   
+        for i, row in enumerate(self.board):
+            for j, val in enumerate(row):
                 
-    # def run(self):
-    #     self.running = True
-    #     while self.running:
-    #         self.display()
-    #         pygame.time.Clock().tick(30)
-                                            
-# board = ms.Board(ms.Difficulty.EXPERT)
-# board.firstClear(5,5)
-# gui = GUI(board)
-# board.nicePrint()
-# print('\n')
-# board.nicePrintTrueValue()
-# while True:
-#     gui.handle_events()
-#     gui.display()
-#     board.guess()
-    #time.sleep(0.1)
-    
+                # Get the corresponding Label widget for the cell
+                lbl = self.labels.get((i, j))
+                
+                # Determine and set the appropriate image based on the cell's state
+                if val == 9:
+                    lbl.config(image=self.images['BlankTile'],  relief='raised')
+                elif val == -1:
+                    lbl.config(image=self.images['ExpBomb'], relief='sunken')
+                else:
+                    lbl.config(image=self.images[f"{val}Tile"], relief='sunken')

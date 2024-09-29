@@ -36,15 +36,33 @@ class MinesweeperEnv(gym.Env):
         self.board.clear_tile(row, col)
         new_state = self.get_state()
 
-        reward, done = self.calculate_reward()
+        reward, done = self.calculate_reward(row,col)
             
         return new_state, reward, done, False, {}
 
     def get_state(self):
         #Create a numerical representation of the board state
         return self.board.get_tile_values()
+    
+    def is_guess(self, row,col):
+        pass
+        
+        # row_start = max(0, row - 1)
+        # row_end = min(self.board.rows, row + 2)  # +2 because slicing is exclusive at the end
+        # col_start = max(0, col - 1)
+        # col_end = min(self.board.cols, col + 2)
 
-    def calculate_reward(self):
+        # # Get the sub-array of neighbors including the element itself (if within bounds)
+        # sub_array = self.get_state()[row_start:row_end, col_start:col_end]
+
+        # # Remove the center element
+        # neighbors = np.delete(sub_array, (row,col))
+
+        # # Check if all remaining neighbors are equal to 9
+        # all_nine = np.all(neighbors == 9)
+        # return all_nine
+
+    def calculate_reward(self,row,col):
 
         if self.board.game_status == ms.BoardState.LOST:
             #The agent hit a mine
@@ -54,6 +72,9 @@ class MinesweeperEnv(gym.Env):
             #All non-mine tiles were cleared
             reward = 1.0
             done = True
+        elif self.is_guess(row,col):
+            reward = -0.1
+            done = False
         else:
             reward = 0.1
             done = False

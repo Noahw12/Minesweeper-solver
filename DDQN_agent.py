@@ -54,7 +54,6 @@ class ActionMaskPolicy(CnnPolicy):
         
         obs_tensor = th.as_tensor(observation, device=self.device, dtype=th.int64)
         one_hot_obs = F.one_hot(obs_tensor, 10).permute(0, 3, 1, 2)
-        #print(one_hot_obs.shape)
         
         q_values = self.q_net(one_hot_obs)
         action_mask = (obs_tensor == 9).flatten(start_dim=1)
@@ -71,7 +70,7 @@ class DDQN(DQN):
     def __init__(self, *args, **kwargs):
         super(DDQN, self).__init__(*args, **kwargs)
     
-    def train(self, gradient_steps: int, batch_size: int = 100) -> None:
+    def train(self, gradient_steps: int, batch_size: int = 100):
         self.policy.train()
         
         #Update learning rate according to lr schedule
@@ -169,7 +168,7 @@ def make_env():
     return env 
 
 buffer_size = 10000
-batch_size = 64
+batch_size = 32
 gamma = 0.99
 expl_fract = 0.7
 expl_init = 1.0
@@ -209,6 +208,8 @@ model.learn(total_timesteps=timesteps)
 
 mean_reward, std_reward = evaluate_policy(model, model.get_env(), n_eval_episodes=10000)
 print(f"Mean reward: {mean_reward} +/- {std_reward}")
+
+model.save("models/DDQN_agent_0.1")
 
 #TODO
 #4. Reward structure

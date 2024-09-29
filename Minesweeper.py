@@ -165,11 +165,4 @@ class Board:
         self.win_check()
             
     def flag_tile(self, row, col):
-        self.get_tile(row,col).flag()
-        
-    def guess(self):
-        hidden_array = np.array([[tile.get_value() == 9 for tile in row] for row in self.tiles])
-        indices = np.argwhere(hidden_array)
-        selected_index = indices[np.random.choice(len(indices))]
-        self.clear_tile(selected_index[0], selected_index[1])
-        
+        self.get_tile(row,col).flag()     
