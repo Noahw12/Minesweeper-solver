@@ -72,9 +72,9 @@ class MinesweeperEnv(gym.Env):
             #All non-mine tiles were cleared
             reward = 1.0
             done = True
-        elif self.is_guess(row,col):
-            reward = -0.1
-            done = False
+        # elif self.is_guess(row,col):
+        #     reward = -0.1
+        #     done = False
         else:
             reward = 0.1
             done = False

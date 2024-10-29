@@ -10,6 +10,10 @@ class Tile:
     def get_value(self):
         return self.value
     
+    #Used for the tkinter GUI only
+    def set_to_true_value(self):
+        self.value = self.trueValue
+    
     def get_true_value(self):
         return self.trueValue
     
