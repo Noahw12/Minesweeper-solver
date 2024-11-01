@@ -19,11 +19,11 @@ class MinesweeperEnv(gym.Env):
         self.rng, seed = gym.utils.seeding.np_random(seed)
         return [seed]  #Return the list of seeds used in your environment
 
-    def reset(self, seed=None, options=None):
-        info = {'Result': self.board.game_status}  
-        self.seed(seed)
+    def reset(self, seed=None, options=None): 
+        super().reset(seed=seed)
         self.board = ms.Board(diff) #Reinitialize the board
         self.state = self.get_state()
+        info = {'Result': self.board.game_status} 
         return self.state, info
 
     #action_index = row * grid_width + col 

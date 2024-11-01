@@ -9,12 +9,19 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.buffers import ReplayBuffer, ReplayBufferSamples
 from stable_baselines3.common.utils import polyak_update
 
+#Very big negative number used for action masking
+# '-inf' caused numerical instability
+XL_NEG = -1e9
+
+#Number of cell types visible to the agent
+NUM_CLASSES = 10
+
 class QNetworkBeginner(BaseFeaturesExtractor):
     def __init__(self, observation_space, features_dim):
         super(QNetworkBeginner,self).__init__(observation_space, features_dim)
       
         self.conv = nn.Sequential(
-            nn.Conv2d(10,features_dim, kernel_size=3, padding=1),
+            nn.Conv2d(NUM_CLASSES,features_dim, kernel_size=3, padding=1),
             nn.ReLU(),
             nn.Conv2d(features_dim, features_dim, kernel_size=3, padding=1),
             nn.ReLU(),
@@ -27,7 +34,9 @@ class QNetworkBeginner(BaseFeaturesExtractor):
         )   
     
     def forward(self, observation):
-        return self.conv(observation)
+        obs_tensor = observation.to(th.int64)
+        one_hot_obs = F.one_hot(obs_tensor, NUM_CLASSES).permute(0, 3, 1, 2).float()
+        return self.conv(one_hot_obs)
         
 
 #TODO Intermediate and Expert networks not implemented yet
@@ -46,26 +55,25 @@ class ActionMaskPolicy(CnnPolicy):
             features_extractor_class=QNetworkBeginner,
             features_extractor_kwargs={'features_dim': features_dim},
         )
-            
-    def forward(self, observation, *args, **kwargs):
-        
-        obs_tensor = th.as_tensor(observation, device=self.device, dtype=th.int64)
-        one_hot_obs = F.one_hot(obs_tensor, 10).permute(0, 3, 1, 2)
-        
-        q_values = self.q_net(one_hot_obs)
-        action_mask = (obs_tensor == 9).flatten(start_dim=1)
-
-        masked_q_values = th.where(action_mask, q_values, th.tensor(float('-inf')).to(q_values.device))
-        return masked_q_values 
     
-    def predict(self, observation, state=None, episode_start=None, deterministic=True): 
-        q_values = self.forward(observation)
-        action = th.argmax(q_values, dim=1)
-        return action.cpu().numpy(), state
+    def apply_action_mask(self, q_values, observation):
+        
+        action_mask = (observation == 9).flatten(start_dim=1)
+        
+        masked_q_values = th.where(action_mask, q_values, th.tensor(XL_NEG, device=q_values.device))
+        return masked_q_values
+        
+            
+    def forward(self, observation, deterministic=False, *args, **kwargs):
+        
+        q_values = self.q_net(observation)
+        masked_q_values = self.apply_action_mask(q_values, observation)
+        return masked_q_values 
 
 class DDQN(DQN):
     def __init__(self, *args, **kwargs):
         super(DDQN, self).__init__(*args, **kwargs)
+        self._n_updates = 0
     
     #batch_size = number of samples from the replay buffer
     def train(self, gradient_steps, batch_size = 100):
@@ -77,27 +85,30 @@ class DDQN(DQN):
         for _ in range(gradient_steps):
             #Sample replay buffer
             replay_data, batch_indices, env_indices = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+            #Get Q-values estimates
+            obs_tensor = replay_data.observations.to(th.int64)
+            obs_tensor_next = replay_data.next_observations.to(th.int64)
             
             with th.no_grad():
                 #Compute the next Q-values using the target network
-                one_hot_next_obs = F.one_hot(replay_data.next_observations.to(th.int64), 10).permute(0, 3, 1, 2)
-                next_q_values = self.q_net_target(one_hot_next_obs)
-                next_q_values_online = self.q_net(one_hot_next_obs)
-                next_actions = next_q_values_online.argmax(dim=1, keepdim=True)
-                next_q_values = th.gather(next_q_values, dim=1, index=next_actions).squeeze(1)
+                next_q_values = self.policy.q_net_target(obs_tensor_next).flatten(start_dim=1)
+                next_q_values_online = self.policy.q_net(obs_tensor_next).flatten(start_dim=1)
+                masked_next_q_values = self.policy.apply_action_mask(next_q_values, obs_tensor_next)
+                masked_next_q_values_online = self.policy.apply_action_mask(next_q_values_online, obs_tensor_next)
+                
+                next_actions = masked_next_q_values_online.argmax(dim=1, keepdim=True)
+                next_q_values = th.gather(masked_next_q_values, dim=1, index=next_actions).squeeze(1)
                 #Expected Q values
                 rewards = replay_data.rewards.squeeze(1)
                 dones =  replay_data.dones.squeeze(1)
                 target_q_values = rewards + (1 - dones ) * self.gamma * next_q_values
-            
-            #Get current Q-values estimates
-            one_hot_obs = F.one_hot(replay_data.observations.to(th.int64), 10).permute(0, 3, 1, 2)
-            current_q_values = self.q_net(one_hot_obs)
-            current_q_values = th.gather(current_q_values, dim=1, index=replay_data.actions.long()).squeeze(1)
+           
+            current_q_values = self.policy.q_net(obs_tensor).flatten(start_dim=1)
+            masked_current_q_values = self.policy.apply_action_mask(current_q_values, obs_tensor)
+            current_q_values = masked_current_q_values.gather(1, replay_data.actions.long()).squeeze(1)
         
-            # Compute TD-error for updating the priorities in the PER buffer
-            td_errors = th.abs(current_q_values - target_q_values).detach().cpu().numpy()
-            
+            #Compute TD-error for updating the priorities in the PER buffer
+            td_errors = th.abs(current_q_values - target_q_values).detach().cpu().numpy() 
             self.replay_buffer.update_priorities(batch_indices, env_indices, td_errors)
             
             #Compute Huber loss (less sensitive to outliers)
@@ -108,9 +119,15 @@ class DDQN(DQN):
             loss.backward()
             self.policy.optimizer.step()
         
-        # Update target network
-        if self.gradient_steps % self.target_update_interval == 0:
-            polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), self.tau)
+        #Update target network
+        self._n_updates += 1   
+        if self.tau < 1.0:
+            #Soft update at every training step
+            polyak_update(self.policy.q_net.parameters(), self.policy.q_net_target.parameters(), self.tau)
+        else:
+            #Hard update at specified intervals
+            if self._n_updates % self.target_update_interval == 0:
+                polyak_update(self.policy.q_net.parameters(), self.policy.q_net_target.parameters(), self.tau)
 
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size, observation_space, action_space, device, alpha, n_envs, **kwargs):
@@ -123,7 +140,8 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         super().add(obs, next_obs, action, reward, done, info)
         max_priority = self.priorities.max() if self.full else self.priorities[:self.pos].max()
         max_priority = max_priority if max_priority > 0 else 1.0  #Avoid 0 priority
-        self.priorities[self.pos - 1] = max_priority  
+        idx = self.pos if not self.full else (self.pos - 1) % self.buffer_size
+        self.priorities[idx] = max_priority  
     
     def _sample_proportional(self, batch_size):
         if self.full:

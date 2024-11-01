@@ -47,8 +47,8 @@ class Board:
         self.tiles = self.create_board()
         self.game_status = BoardState.ONGOING
         #Make the first move
-        self.first_clear(np.random.randint(0,self.cols), 
-                              np.random.randint(0,self.rows))
+        self.first_clear(np.random.randint(0,self.rows), 
+                              np.random.randint(0,self.cols))
             
             
     def get_dimensions(self, diff):
