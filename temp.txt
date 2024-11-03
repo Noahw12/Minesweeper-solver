@@ -102,3 +102,54 @@ Recommendation: Increase the number of evaluation episodes and also consider mon
 10. Debugging Tips
 Monitor Q-values: Print and monitor the Q-values over time. Look for any signs of divergence, collapse to zero, or other anomalies.
 Visual Debugging: Render the environment occasionally during training to see what actions the agent is taking. This can provide insight into whether the agent is learning any useful strategy.
+
+
+ # def _sample_proportional(self, batch_size):
+    #     if self.full:
+    #         #The buffer is full, we can sample from the entire buffer   
+    #         flat_priorities = self.priorities.flatten()
+    #         total_priority = flat_priorities.sum()
+    #         sampled_indices = np.random.choice(self.buffer_size * self.n_envs, batch_size, p=flat_priorities / total_priority)
+    #     else:
+    #         #The buffer is not full, sample only up to self.pos to avoid uninitialized data
+    #         flat_priorities = self.priorities[:self.pos].flatten()
+    #         total_priority = flat_priorities.sum()
+    #         sampled_indices = np.random.choice(self.pos * self.n_envs, batch_size, p=flat_priorities / total_priority)
+            
+    #     batch_indices = sampled_indices // self.n_envs
+    #     env_indices = sampled_indices % self.n_envs
+            
+    #     return batch_indices, env_indices
+
+
+    # if self.tau < 1.0:
+        #     #Soft update at every training step
+        #     polyak_update(self.policy.q_net.parameters(), self.policy.q_net_target.parameters(), self.tau)
+        # else:
+        #     #Hard update at specified intervals
+        #     if self._n_updates % self.target_update_interval == 0:
+        #         polyak_update(self.policy.q_net.parameters(), self.policy.q_net_target.parameters(), self.tau)
+
+
+# class ActionMaskPolicy(CnnPolicy):
+#     def __init__(self, observation_space, action_space, lr_schedule, features_dim=64):
+#         super(ActionMaskPolicy, self).__init__(
+#             observation_space=observation_space,
+#             action_space=action_space,
+#             lr_schedule=lr_schedule,
+#             features_extractor_class=FeaturesExtractorBeginner,
+#             features_extractor_kwargs={'features_dim': features_dim},
+#         )
+    
+#     def apply_action_mask(self, q_values, observation):
+        
+#         action_mask = (observation == 9).flatten(start_dim=1)
+        
+#         masked_q_values = th.where(action_mask, q_values, th.full_like(q_values, XL_NEG, device=q_values.device))
+#         return masked_q_values
+            
+    # def forward(self, observation, deterministic=False, *args, **kwargs):
+        
+    #     q_values = self.q_net(observation)
+    #     masked_q_values = self.apply_action_mask(q_values, observation)
+    #     return masked_q_values

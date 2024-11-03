@@ -3,6 +3,7 @@ import numpy as np
 from DDQN import DDQN
 from Minesweeper_env import MinesweeperEnv 
 from tkinter import messagebox
+from sys import exit
 
 #Pause between agent actions
 pause = 500
@@ -13,6 +14,7 @@ class MineSweeperGUI:
         self.model = model
         self.wins = 0
         self.losses = 0
+        self.n_moves = 0
         self.root = tk.Tk()
         self.root.title("Minesweeper RL Agent")
 
@@ -46,7 +48,7 @@ class MineSweeperGUI:
     def create_status_bar(self):
     
         self.status_var = tk.StringVar()
-        self.status_var.set(f"Wins: {self.wins} | Losses: {self.losses}")
+        self.status_var.set(f"Wins: {self.wins} | Losses: {self.losses} | Moves: {self.n_moves}")
         
         status_font = ("Helvetica", 14)
         
@@ -61,7 +63,7 @@ class MineSweeperGUI:
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
         
     def update_status_bar(self):
-        self.status_var.set(f"Wins: {self.wins} | Losses: {self.losses}")
+        self.status_var.set(f"Wins: {self.wins} | Losses: {self.losses} | Moves: {self.n_moves}")
 
     def create_grid_frame(self):
         self.grid_frame = tk.Frame(self.root)
@@ -123,6 +125,7 @@ class MineSweeperGUI:
     def reset_env_and_play(self):
         #Reset the environment before starting a new game
         self.env.reset()
+        self.n_moves = 0
         
         #Update the GUI to show all tiles as covered
         self.reset_covered()
@@ -145,8 +148,11 @@ class MineSweeperGUI:
         
         #Step in the environment with the predicted action
         _, reward, done, _, _ = self.env.step(action)
-
+        #print(f"Reward {reward}: Tile ({action // self.env.board.cols},{action % self.env.board.cols})")
+        self.n_moves += 1
+        
         #Update the GUI
+        self.update_status_bar()
         self.update_grid_frame()
 
         #Check if game is done
@@ -178,7 +184,7 @@ class MineSweeperGUI:
 env = MinesweeperEnv()  
 
 #Load the trained RL model 
-model = DDQN.load("models/DDQN_agent_0.1")
+model = DDQN.load("models/DDQN_agent_0.3")
 
 #Start the Tkinter GUI 
 gui = MineSweeperGUI(env, model)

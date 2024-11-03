@@ -11,7 +11,7 @@ class MinesweeperEnv(gym.Env):
         self.board = ms.Board(diff)
         self.action_space = gym.spaces.Discrete(self.board.cols * self.board.rows)
         self.observation_space = gym.spaces.Box(low=0, high=9, 
-                                                shape=(self.board.cols, self.board.rows), dtype=np.int32)
+                                                shape=(self.board.rows, self.board.cols), dtype=np.int32)
         self.state = self.get_state()
         
     def seed(self, seed=None):
@@ -44,8 +44,8 @@ class MinesweeperEnv(gym.Env):
         #Create a numerical representation of the board state
         return self.board.get_tile_values()
     
-    def is_guess(self, row,col):
-        pass
+    # def is_guess(self, row,col):
+    #     pass
         
         # row_start = max(0, row - 1)
         # row_end = min(self.board.rows, row + 2)  # +2 because slicing is exclusive at the end
