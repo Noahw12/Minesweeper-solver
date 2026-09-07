@@ -4,7 +4,6 @@ from enum import Enum
 
 #Tile.value encodes what a player is allowed to see
 COVERED = 9
-FLAGGED = 10
 #Tile.trueValue uses -1 for a mine and 0-8 for the number of adjacent mines
 MINE = -1
 
@@ -29,12 +28,8 @@ class Tile:
     def set_true_value(self, newValue):
         self.trueValue = newValue
 
-    #Only a covered tile may be cleared, a flagged tile is protected
     def is_covered(self):
         return self.value == COVERED
-
-    def is_flagged(self):
-        return self.value == FLAGGED
 
     def is_mine(self):
         return self.trueValue == MINE
@@ -45,19 +40,6 @@ class Tile:
         else:
             self.value = self.trueValue
             return self.value
-
-    def flag(self):
-        #Revealed tiles must keep their value, otherwise board state is lost
-        if self.value == COVERED:
-            self.value = FLAGGED
-            return True
-        return False
-
-    def unflag(self):
-        if self.value == FLAGGED:
-            self.value = COVERED
-            return True
-        return False
 
 class Difficulty(Enum):
     BEGINNER = 1
@@ -70,19 +52,17 @@ class BoardState(Enum):
     LOST = 2
 
 class Board:
-    #rng is a numpy Generator. Pass the one owned by the gym environment to make
-    #boards reproducible, without it every board comes from a fresh generator.
-    def __init__(self, diff, rng=None, first_move=True):
+    #Pass the gym environment's rng to make boards reproducible
+    def __init__(self, diff, rng=None):
         self.diff = diff
         self.rng = rng if rng is not None else np.random.default_rng()
         self.rows, self.cols, self.mines = self.get_dimensions(diff)
         self.safe_tiles = self.rows * self.cols - self.mines
         self.tiles = self.create_board()
         self.game_status = BoardState.ONGOING
-        #Make the first move
-        if first_move:
-            self.first_clear(int(self.rng.integers(0, self.rows)),
-                             int(self.rng.integers(0, self.cols)))
+        #Mines are placed on the first clear, so the opening tile is always safe
+        #and choosing it is a real decision
+        self.mines_placed = False
 
     @staticmethod
     def get_dimensions(diff):
@@ -108,7 +88,6 @@ class Board:
             r, c = available_positions[index]
             self.get_tile(r, c).set_true_value(MINE)
 
-    #Calculate adjacent mines for every cell of the board that is not a mine
     def _count_adjacent_mines(self):
         for r in range(self.rows):
             for c in range(self.cols):
@@ -117,20 +96,6 @@ class Board:
                 count = sum(self.get_tile(r + dr, c + dc).is_mine() for dr, dc in NEIGHBOURS
                             if 0 <= r + dr < self.rows and 0 <= c + dc < self.cols)
                 self.get_tile(r, c).set_true_value(count)
-
-    #Opening move that only guarantees the clicked tile itself to be safe
-    def first_clear_small_safe_zone(self, row, col):
-        self._place_mines({(row, col)})
-        self._count_adjacent_mines()
-        return self.clear_tile(row, col)
-
-    #Opening move that guarantees the clicked tile and its neighbours to be safe
-    def first_clear(self, row, col):
-        safe_zone = {(row + dr, col + dc) for dr in (-1, 0, 1) for dc in (-1, 0, 1)
-                     if 0 <= row + dr < self.rows and 0 <= col + dc < self.cols}
-        self._place_mines(safe_zone)
-        self._count_adjacent_mines()
-        return self.clear_tile(row, col)
 
     def get_tile(self, row, col):
         return self.tiles[row][col]
@@ -141,13 +106,11 @@ class Board:
     def get_true_tile_values(self):
         return np.array([[tile.get_true_value() for tile in row] for row in self.tiles])
 
-    #The board is won once every tile that is still hidden is a mine. Counting
-    #covered tiles alone would never trigger on a board where mines are flagged.
+    #The board is won once every tile that is still covered is a mine
     def win_check(self):
         if self.game_status is not BoardState.ONGOING:
             return
-        values = self.get_tile_values()
-        hidden = np.count_nonzero((values == COVERED) | (values == FLAGGED))
+        hidden = np.count_nonzero(self.get_tile_values() == COVERED)
         if hidden == self.mines:
             self.game_status = BoardState.WON
 
@@ -157,28 +120,14 @@ class Board:
             for tile in row:
                 if tile.get_value() == COVERED:
                     niceRow += '?' + ' '
-                elif tile.get_value() == FLAGGED:
-                    niceRow += 'F' + ' '
                 elif tile.get_value() == MINE:
                     niceRow += 'B' + ' '
                 else:
                     niceRow += str(tile.get_value()) + ' '
             print(niceRow)
 
-    def nice_print_true_values(self):
-        for row in self.tiles:
-            niceRow = ''
-            for tile in row:
-                if tile.get_true_value() == MINE:
-                    niceRow += 'B' + ' '
-                else:
-                    niceRow += str(tile.get_true_value()) + ' '
-            print(niceRow)
-
-    #Flood fill starting from a tile without adjacent mines.
-    #Returns the number of tiles the fill revealed.
+    #Flood fill from a tile with no adjacent mines. Returns how many it revealed.
     def read_tiles(self, row, col):
-
         queue = deque([(row, col)])
         visited = set([(row, col)])
         revealed = 0
@@ -189,23 +138,21 @@ class Board:
             for dx, dy in NEIGHBOURS:
                 nx, ny = current_row + dx, current_col + dy
 
-                #Check bounds and if the tile has not been visited
                 if not (0 <= nx < self.rows and 0 <= ny < self.cols) or (nx, ny) in visited:
                     continue
                 visited.add((nx, ny))
                 tile = self.get_tile(nx, ny)
-                #An already revealed tile was expanded when it was revealed, and a
-                #flagged tile or a mine is never opened by a flood fill
+                #A revealed tile was expanded already, and a fill never opens a mine
                 if not tile.is_covered() or tile.is_mine():
                     continue
-                if tile.clear() == 0:  #Process the tile
+                if tile.clear() == 0:
                     queue.append((nx, ny))
                 revealed += 1
 
         return revealed
 
-    #Reveal a tile and return how many tiles that revealed. Clearing a mine, a
-    #finished board or a tile that is not covered reveals nothing.
+    #Returns how many tiles were revealed; a mine, a finished board or an
+    #already revealed tile reveals nothing
     def clear_tile(self, row, col):
         if self.game_status is not BoardState.ONGOING:
             return 0
@@ -213,6 +160,12 @@ class Board:
         tile = self.get_tile(row, col)
         if not tile.is_covered():
             return 0
+
+        #Classic first click rule: the mines avoid the opening tile, and only it
+        if not self.mines_placed:
+            self._place_mines({(row, col)})
+            self._count_adjacent_mines()
+            self.mines_placed = True
 
         tile_value = tile.clear()
         if tile_value == MINE:
@@ -224,9 +177,3 @@ class Board:
             revealed += self.read_tiles(row, col)
         self.win_check()
         return revealed
-
-    def flag_tile(self, row, col):
-        return self.get_tile(row, col).flag()
-
-    def unflag_tile(self, row, col):
-        return self.get_tile(row, col).unflag()

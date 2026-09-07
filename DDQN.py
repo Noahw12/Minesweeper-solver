@@ -9,46 +9,39 @@ from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.buffers import ReplayBuffer, ReplayBufferSamples
 
 #Very big negative number used for action masking
-# '-inf' caused numerical instability
 XL_NEG = -1e9
 
-#Added to every TD-error before it becomes a priority, so that a perfectly
-#predicted transition keeps a small chance of being sampled again
-PER_EPSILON = 1e-6
+#The skip is what keeps a stack this deep trainable.
+class ResidualBlock(nn.Module):
+    def __init__(self, n_filters):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(n_filters, n_filters, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(n_filters, n_filters, kernel_size=3, padding=1)
 
-class MinesweeperCNN(BaseFeaturesExtractor):
-    #The last convolution produces one value per tile, so features_dim is fixed by
-    #the board size and n_filters only sets the width of the hidden layers. Combined
-    #with net_arch=[] this keeps one output of the network per action.
-    def __init__(self, observation_space, n_filters=64):
+    def forward(self, x):
+        h = F.relu(self.conv1(x))
+        return F.relu(x + self.conv2(h))
+
+class MinesweeperResCNN(BaseFeaturesExtractor):
+    def __init__(self, observation_space, n_filters=128, n_blocks=3):
         rows, cols = observation_space.shape
-        super(MinesweeperCNN, self).__init__(observation_space, features_dim=rows * cols)
+        super(MinesweeperResCNN, self).__init__(observation_space, features_dim=rows * cols)
 
         #One input channel per tile value the agent can observe
         self.num_classes = int(observation_space.high.max()) + 1
 
-        self.conv = nn.Sequential(
-            nn.Conv2d(self.num_classes, 32, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(32, n_filters, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(n_filters, n_filters, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(n_filters, n_filters, kernel_size=3, padding=1),
-            nn.ReLU(),
-            nn.Conv2d(n_filters, 1, kernel_size=1, padding=0),
-            nn.Flatten()
-        )
+        layers = [nn.Conv2d(self.num_classes, n_filters, kernel_size=3, padding=1), nn.ReLU()]
+        layers += [ResidualBlock(n_filters) for _ in range(n_blocks)]
+        #Down to one value per tile, which is the Q-value of clearing it
+        layers += [nn.Conv2d(n_filters, 1, kernel_size=1, padding=0), nn.Flatten()]
+        self.conv = nn.Sequential(*layers)
 
     def forward(self, observation):
         obs_tensor = observation.to(th.int64)
         one_hot_obs = F.one_hot(obs_tensor, self.num_classes).permute(0, 3, 1, 2).float()
         return self.conv(one_hot_obs)
 
-#The feature extractor already outputs one Q-value per tile, so the network needs
-#no head at all. Any dense head mixes every tile into every action and forces the
-#agent to relearn the same local pattern for all 64 board positions, an identity
-#head keeps the whole network translation equivariant.
+#Avoid standard implementations MLP which destroys spatial information of CNN
 class ConvQNetwork(QNetwork):
     def __init__(self, *args, **kwargs):
         super(ConvQNetwork, self).__init__(*args, **kwargs)
@@ -60,7 +53,6 @@ class ConvQNetwork(QNetwork):
 
 class MinesweeperPolicy(DQNPolicy):
     def make_q_net(self):
-        #Make sure we always have separate networks for features extractors etc
         net_args = self._update_features_extractor(self.net_args, features_extractor=None)
         return ConvQNetwork(**net_args).to(self.device)
 
@@ -76,7 +68,6 @@ class DDQN(DQN):
         mask = self.action_mask(observation)
         return th.where(mask, q_values, th.full_like(q_values, XL_NEG))
 
-    #Uniform sample over the legal actions of each observation in the batch
     def _random_valid_actions(self, obs_tensor):
         mask = self.action_mask(obs_tensor)
         actions = np.zeros(mask.shape[0], dtype=np.int64)
@@ -89,8 +80,6 @@ class DDQN(DQN):
                 actions[i] = valid_actions[th.randint(0, len(valid_actions), (1,))].item()
         return actions
 
-    #SB3 draws unmasked random actions during the warm-up phase, which fills the
-    #replay buffer with moves the agent is never allowed to make. Mask those too.
     def _sample_action(self, learning_starts, action_noise=None, n_envs=1):
         if self.num_timesteps < learning_starts:
             obs_tensor, _ = self.policy.obs_to_tensor(self._last_obs)
@@ -98,26 +87,20 @@ class DDQN(DQN):
             return action, action
         return super()._sample_action(learning_starts, action_noise, n_envs)
 
-    #batch_size = number of samples from the replay buffer
     def train(self, gradient_steps, batch_size=100):
         self.policy.set_training_mode(True)
 
-        #Update learning rate according to lr schedule
         self._update_learning_rate(self.policy.optimizer)
-        #Anneal the importance sampling exponent towards 1 over training
         self.replay_buffer.update_beta(self._current_progress_remaining)
 
         losses = []
         for _ in range(gradient_steps):
-            #Sample replay buffer
             replay_data, batch_indices, env_indices, weights = self.replay_buffer.sample(
                 batch_size, env=self._vec_normalize_env)
-            #Get Q-values estimates
             obs_tensor = replay_data.observations.to(th.int64)
             obs_tensor_next = replay_data.next_observations.to(th.int64)
 
             with th.no_grad():
-                #Compute the next Q-values using the target network
                 next_q_values = self.policy.q_net_target(obs_tensor_next)
                 next_q_values_online = self.policy.q_net(obs_tensor_next)
                 masked_next_q_values = self.apply_action_mask(next_q_values, obs_tensor_next)
@@ -125,35 +108,29 @@ class DDQN(DQN):
 
                 next_actions = masked_next_q_values_online.argmax(dim=1, keepdim=True)
                 next_q_values = th.gather(masked_next_q_values, dim=1, index=next_actions).squeeze(1)
-                #A finished board has no legal action left, its masked Q-value is
-                #XL_NEG. Zero it so the mask can never leak into a target.
+                #A finished board has no legal action, so its masked Q is XL_NEG.
+                #Zero it so the mask cannot leak into a target.
                 has_valid_action = self.action_mask(obs_tensor_next).any(dim=1)
                 next_q_values = th.where(has_valid_action, next_q_values, th.zeros_like(next_q_values))
-                #Expected Q values
                 rewards = replay_data.rewards.squeeze(1)
                 dones = replay_data.dones.squeeze(1)
                 target_q_values = rewards + (1 - dones) * self.gamma * next_q_values
 
-            #The Q-value of the action that was actually taken. It must not be
-            #masked: masking it would turn a stored action into XL_NEG and produce
-            #an enormous TD-error that then dominates the prioritised sampling.
+            #Must not be masked: that would turn a stored action into XL_NEG and
+            #produce a huge TD-error that then dominates prioritised sampling.
             current_q_values = self.policy.q_net(obs_tensor)
             current_q_values = current_q_values.gather(1, replay_data.actions.long()).squeeze(1)
 
-            #Compute TD-error for updating the priorities in the PER buffer
             td_errors = th.abs(current_q_values - target_q_values).detach().cpu().numpy()
             self.replay_buffer.update_priorities(batch_indices, env_indices, td_errors)
 
-            #Compute Huber loss (less sensitive to outliers), weighted by the
-            #importance sampling weights that correct the prioritisation bias
+            #Huber loss, weighted to correct the prioritisation bias
             elementwise_loss = F.smooth_l1_loss(current_q_values, target_q_values, reduction='none')
             loss = (weights * elementwise_loss).mean()
             losses.append(loss.item())
 
-            #Optimize the policy
             self.policy.optimizer.zero_grad()
             loss.backward()
-            #Clip gradient norm
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
             self.policy.optimizer.step()
 
@@ -163,17 +140,14 @@ class DDQN(DQN):
         self.logger.record('train/loss', np.mean(losses))
         self.logger.record('train/per_beta', self.replay_buffer.beta)
 
-    #Override to make sure that no invalid tiles
-    #are selected during exploration
+    #Overridden so exploration never picks an already revealed tile
     def predict(self, observation, state=None, episode_start=None, deterministic=False):
         self.policy.set_training_mode(False)
         #Adds the batch dimension when a single observation is passed in
         obs_tensor, vectorized_env = self.policy.obs_to_tensor(observation)
 
-        #Exploration: sample random valid actions
         if not deterministic and np.random.rand() < self.exploration_rate:
             actions = self._random_valid_actions(obs_tensor)
-        #Exploitation: perform the valid action with the biggest q-value
         else:
             with th.no_grad():
                 q_values = self.policy.q_net(obs_tensor)
@@ -185,6 +159,57 @@ class DDQN(DQN):
 
         return actions, state
 
+#SumTree implementation for PER, for effieciency
+class SumTree:
+    def __init__(self, size):
+        self.size = size
+        self.capacity = 1 << (size - 1).bit_length()
+        self.depth = self.capacity.bit_length() - 1
+        self.tree = np.zeros(2 * self.capacity, dtype=np.float64)
+
+    @property
+    def total(self):
+        return self.tree[1]
+
+    def leaf_values(self, leaves):
+        return self.tree[leaves + self.capacity]
+
+    def min_leaf(self, n_stored):
+        return self.tree[self.capacity:self.capacity + n_stored].min()
+
+    def update(self, leaves, values):
+        if len(leaves) > 1:
+            leaves, keep = np.unique(leaves[::-1], return_index=True)
+            values = values[::-1][keep]
+
+        nodes = leaves + self.capacity
+        delta = values - self.tree[nodes]
+        self.tree[nodes] = values
+
+        #Distinct leaves share ancestors, so the additions must be unbuffered
+        parents = nodes >> 1
+        for _ in range(self.depth):
+            np.add.at(self.tree, parents, delta)
+            parents >>= 1
+
+    def sample(self, batch_size):
+        #Stratified, as in the PER paper
+        segment = self.total / batch_size
+        r = (np.arange(batch_size) + np.random.random(batch_size)) * segment
+
+        nodes = np.ones(batch_size, dtype=np.int64)
+        for _ in range(self.depth):
+            left = nodes << 1
+            left_sum = self.tree[left]
+            go_right = r > left_sum
+            r -= np.where(go_right, left_sum, 0.0)
+            nodes = left + go_right
+
+        #Assert correctness
+        assert self.tree[nodes].min() > 0, \
+            "sum tree descent reached a slot with no priority, the node sums are wrong"
+        return nodes - self.capacity
+
 class PrioritizedReplayBuffer(ReplayBuffer):
     def __init__(self, buffer_size, observation_space, action_space, device='auto', n_envs=1,
                  alpha=0.6, beta_initial=0.4, beta_final=1.0, **kwargs):
@@ -194,55 +219,36 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         if self.optimize_memory_usage:
             raise ValueError('PrioritizedReplayBuffer needs optimize_memory_usage=False')
 
-        self.alpha = alpha  #Controls the amount of prioritization used
-        #Beta controls how strongly the importance sampling weights correct the
-        #bias of that prioritization, it is annealed to beta_final during training
+        self.alpha = alpha
+        #Beta sets how strongly the weights correct that bias
         self.beta_initial = beta_initial
         self.beta_final = beta_final
         self.beta = beta_initial
-        self.priorities = np.zeros((max(buffer_size // n_envs, 1), n_envs), dtype=np.float32)
+        #Empty slots stay at priority 0 and are never drawn
+        self.tree = SumTree(self.buffer_size * self.n_envs)
+        self.max_priority = 1.0
 
     def update_beta(self, progress_remaining):
-        #SB3 lets progress_remaining drift slightly outside [0, 1] at the end of a
-        #run, and a beta above beta_final would over-correct the weights
+        #SB3 lets progress_remaining drift outside [0, 1] at the end of a run
         progress_remaining = min(max(progress_remaining, 0.0), 1.0)
         self.beta = self.beta_final + (self.beta_initial - self.beta_final) * progress_remaining
 
     def add(self, obs, next_obs, action, reward, done, info):
+        #Read the row before super().add() advances it
+        row = self.pos
         super().add(obs, next_obs, action, reward, done, info)
-        if self.full:
-            max_priority = self.priorities.max()
-        elif self.pos > 0:
-            max_priority = self.priorities[:self.pos].max()
-        else:
-            max_priority = 0.0
-        max_priority = max_priority if max_priority > 0 else 1.0  #Avoid 0 priority
-        #super().add() already advanced pos, so pos - 1 is the row just written
-        self.priorities[self.pos - 1] = max_priority
+        leaves = row * self.n_envs + np.arange(self.n_envs)
+        self.tree.update(leaves, np.full(self.n_envs, self.max_priority))
 
     def _sample_proportional(self, batch_size):
-        if self.full:
-            #The buffer is full, we can sample from the entire buffer
-            flat_priorities = self.priorities.flatten()
-        else:
-            #The buffer is not full, sample only up to self.pos to avoid uninitialized data
-            flat_priorities = self.priorities[:self.pos].flatten()
+        leaves = self.tree.sample(batch_size)
+        n_stored = (self.buffer_size if self.full else self.pos) * self.n_envs
+        
+        priorities = self.tree.leaf_values(leaves)
+        weights = np.power(priorities / self.tree.min_leaf(n_stored), -self.beta)
 
-        total_priority = flat_priorities.sum()
-        if total_priority > 0:
-            probabilities = flat_priorities / total_priority
-        else:
-            #Every stored transition is predicted perfectly, fall back to uniform
-            probabilities = np.full(flat_priorities.size, 1.0 / flat_priorities.size)
-
-        sampled_indices = np.random.choice(flat_priorities.size, batch_size, p=probabilities)
-
-        #Importance sampling weights, normalized so they only ever scale a loss down
-        weights = np.power(flat_priorities.size * probabilities[sampled_indices], -self.beta)
-        weights = weights / weights.max()
-
-        batch_indices = sampled_indices // self.n_envs
-        env_indices = sampled_indices % self.n_envs
+        batch_indices = leaves // self.n_envs
+        env_indices = leaves % self.n_envs
 
         return batch_indices, env_indices, weights.astype(np.float32)
 
@@ -263,9 +269,9 @@ class PrioritizedReplayBuffer(ReplayBuffer):
         env_indices = np.asarray(env_indices)
         td_errors = np.asarray(td_errors)
 
-        #Compute the new priorities. The epsilon keeps a transition with a zero
-        #TD-error sampleable, without it the transition is dropped forever.
-        new_priorities = np.power(np.abs(td_errors) + PER_EPSILON, self.alpha)
+        #The epsilon stops a zero TD-error transition being dropped forever
+        new_priorities = np.power(np.abs(td_errors) + 1e-6, self.alpha)
 
-        #Update the priorities array
-        self.priorities[batch_indices, env_indices] = new_priorities
+        leaves = batch_indices * self.n_envs + env_indices
+        self.tree.update(leaves, new_priorities)
+        self.max_priority = max(self.max_priority, float(new_priorities.max()))

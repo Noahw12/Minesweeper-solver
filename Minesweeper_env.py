@@ -3,28 +3,15 @@ import numpy as np
 import Minesweeper as ms
 from gymnasium.envs.registration import register
 
-#Reward for stepping on a mine
 MINE_REWARD = -1.0
-#Bonus for clearing the whole board
-WIN_REWARD = 1.0
-#Penalty for picking a tile that is already revealed or flagged. Such a move does
-#not change the board, so without a penalty the agent can farm reward forever.
+WIN_REWARD = 5.0
+#Without this the agent can farm reward on moves that change nothing
 INVALID_ACTION_REWARD = -1.0
-#Reward for safely uncovering a tile. It has to stay within a small factor of
-#MINE_REWARD: if it does not, the gap in value between a tile that is known to be
-#safe and an average unknown tile shrinks below the error the network fits to, and
-#the agent only ever learns to dodge mines instead of making progress.
-#It is a flat reward per move and not per revealed tile, otherwise a lucky flood
-#fill would outweigh the mine penalty and the agent turns reckless.
-SAFE_REWARD = 0.3
-#Penalty for clearing a tile that has no revealed neighbour. Such a move cannot be
-#deduced from anything on the board, it is a blind guess. Penalising it pushes the
-#agent onto the frontier, which is the only place where deductions are possible.
-GUESS_REWARD = -0.3
-
-#An opening move can, very rarely, clear the whole board. Reroll a few times so
-#that the agent is never handed an already finished game.
-MAX_BOARD_ATTEMPTS = 100
+#Shaping while wins are still too rare to learn from. Flat per move, not per
+#revealed tile, or a lucky flood fill would outweigh the mine penalty.
+SAFE_REWARD = 0.1
+#A blind guess. Tied to SAFE_REWARD so a blind but safe click is worth zero.
+GUESS_REWARD = -SAFE_REWARD
 
 class MinesweeperEnv(gym.Env):
     metadata = {'render_modes': ['ansi']}
@@ -33,37 +20,25 @@ class MinesweeperEnv(gym.Env):
         super().__init__()
         self.difficulty = difficulty
         rows, cols, _ = ms.Board.get_dimensions(difficulty)
-        self.board = self._new_board()
+        self.board = ms.Board(difficulty, rng=self.np_random)
         self.action_space = gym.spaces.Discrete(rows * cols)
-        #Values 0-8 are revealed tiles, 9 is a covered tile. The environment never
-        #flags, so ms.FLAGGED is outside the observation space on purpose.
+        #Values 0-8 are revealed tiles, 9 is a covered tile
         self.observation_space = gym.spaces.Box(low=0, high=ms.COVERED,
                                                 shape=(rows, cols), dtype=np.int32)
         self.state = self.get_state()
 
-    def _new_board(self):
-        for _ in range(MAX_BOARD_ATTEMPTS):
-            #self.np_random is seeded by reset(seed=...), which is what makes
-            #episodes reproducible
-            board = ms.Board(self.difficulty, rng=self.np_random)
-            if board.game_status is ms.BoardState.ONGOING:
-                return board
-        return board
-
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.board = self._new_board() #Reinitialize the board
+        self.board = ms.Board(self.difficulty, rng=self.np_random)
         self.state = self.get_state()
         info = {'result': self.board.game_status.name}
         return self.state, info
 
-    #action_index = row * grid_width + col
-    #Action is encoded by the formula above
+    #action = row * cols + col
     def step(self, action):
         row, col = divmod(int(action), self.board.cols)
 
-        #The board is authoritative about what is legal, the action mask below is
-        #only an aid for the agent
+        #The board is authoritative about legality, action_masks is only an aid
         invalid = not self.board.get_tile(row, col).is_covered()
         #Has to be measured before the tile is cleared
         guess = False if invalid else self.is_guess(row, col)
@@ -79,7 +54,6 @@ class MinesweeperEnv(gym.Env):
         return self.state, reward, terminated, False, info
 
     def get_state(self):
-        #Create a numerical representation of the board state
         return self.board.get_tile_values()
 
     #True for every tile the agent is still allowed to clear
@@ -98,20 +72,17 @@ class MinesweeperEnv(gym.Env):
     def calculate_reward(self, invalid, guess, revealed):
 
         if invalid:
-            #The agent picked a tile that is not covered, the board did not change
             return INVALID_ACTION_REWARD, False
 
         #The penalty is for the decision, so it applies whatever the move uncovered
         reward = GUESS_REWARD if guess else 0.0
 
         if self.board.game_status is ms.BoardState.LOST:
-            #The agent hit a mine
             return reward + MINE_REWARD, True
 
         reward += SAFE_REWARD
 
         if self.board.game_status is ms.BoardState.WON:
-            #All non-mine tiles were cleared
             return reward + WIN_REWARD, True
 
         return reward, False
@@ -119,8 +90,7 @@ class MinesweeperEnv(gym.Env):
     def render(self):
         self.board.nice_print()
 
-#A board can never need more clicks than it has safe tiles, so that is the
-#episode limit. Registering per difficulty keeps the limit in sync with the board.
+#A board never needs more clicks than it has safe tiles, so that is the limit
 DIFFICULTY_IDS = {
     'Minesweeper-v0': ms.Difficulty.BEGINNER,
     'MinesweeperBeginner-v0': ms.Difficulty.BEGINNER,
