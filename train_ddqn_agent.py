@@ -22,12 +22,9 @@ gamma = 0.97
 expl_fract = 0.2
 expl_init = 1.0
 expl_fin = 0.01
-alpha = 0.6
-beta_initial = 0.4
 
 timesteps = 6000000 + buffer_size
 n_envs = 16
-lr = lr_schedule
 #Soft updates need this every step; SB3's default of 10000 would freeze the target
 target_update_interval = 1
 train_freq = (1, "step")
@@ -49,7 +46,7 @@ model = DDQN(
     'features_extractor_kwargs': {'n_filters': 128, 'n_blocks': 3},
     'normalize_images': False,
     },
-    learning_rate=lr,
+    learning_rate=lr_schedule,
     verbose=1,
     tensorboard_log="./logs/DDQN_Minesweeper/",
     buffer_size=buffer_size,
@@ -59,7 +56,6 @@ model = DDQN(
     exploration_initial_eps=expl_init,
     exploration_final_eps=expl_fin,
     replay_buffer_class=PrioritizedReplayBuffer,
-    replay_buffer_kwargs={'alpha': alpha, 'beta_initial': beta_initial},
     learning_starts=learning_starts,
     gradient_steps=gradient_steps,
     train_freq=train_freq,

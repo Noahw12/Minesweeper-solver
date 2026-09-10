@@ -49,10 +49,7 @@ class AgentWatcher(MinesweeperView):
         self.set_board(self.env.unwrapped.board)
         self.n_moves = 0
 
-        self.reset_covered()
-
-        self.root.after(pause, self.update_grid_frame)
-
+        self.update_grid_frame()
         self.root.after(pause * 2, self.agent_play)
 
     def agent_play(self):
@@ -93,7 +90,7 @@ if __name__ == "__main__":
     #Init environment, gymnasium.make adds the episode step limit
     env = gymnasium.make('Minesweeper-v0')
 
-    model = DDQN.load("models/DDQN_agent_0.5")
+    model = DDQN.load("models/DDQN_agent_0.8")
 
     gui = AgentWatcher(env, model)
     gui.run()

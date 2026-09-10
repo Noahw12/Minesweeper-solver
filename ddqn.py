@@ -57,9 +57,6 @@ class MinesweeperPolicy(DQNPolicy):
         return ConvQNetwork(**net_args).to(self.device)
 
 class DDQN(DQN):
-    def __init__(self, *args, **kwargs):
-        super(DDQN, self).__init__(*args, **kwargs)
-
     #True for every tile that is still covered, those are the legal actions
     def action_mask(self, observation):
         return (observation == COVERED).flatten(start_dim=1)
@@ -73,12 +70,9 @@ class DDQN(DQN):
         mask = self.action_mask(obs_tensor)
         actions = np.zeros(mask.shape[0], dtype=np.int64)
         for i in range(mask.shape[0]):
+            #Never empty: a mine is never revealed, so mines are always still covered
             valid_actions = mask[i].nonzero(as_tuple=False).squeeze(-1)
-            if len(valid_actions) == 0:
-                #Nothing left to clear, the episode is about to end anyway
-                actions[i] = int(self.action_space.sample())
-            else:
-                actions[i] = valid_actions[th.randint(0, len(valid_actions), (1,))].item()
+            actions[i] = valid_actions[th.randint(0, len(valid_actions), (1,))].item()
         return actions
 
     def _sample_action(self, learning_starts, action_noise=None, n_envs=1):
@@ -110,10 +104,6 @@ class DDQN(DQN):
 
                 next_actions = masked_next_q_values_online.argmax(dim=1, keepdim=True)
                 next_q_values = th.gather(masked_next_q_values, dim=1, index=next_actions).squeeze(1)
-                #A finished board has no legal action, so its masked Q is XL_NEG.
-                #Zero it so the mask cannot leak into a target.
-                has_valid_action = next_mask.any(dim=1)
-                next_q_values = th.where(has_valid_action, next_q_values, th.zeros_like(next_q_values))
                 rewards = replay_data.rewards.squeeze(1)
                 dones = replay_data.dones.squeeze(1)
                 target_q_values = rewards + (1 - dones) * self.gamma * next_q_values

@@ -71,14 +71,10 @@ class MinesweeperView:
                 lbl = self.labels.get((i, j))
                 self.draw_tile(lbl, tile, reveal_mines)
 
-    def reset_covered(self):
-        for lbl in self.labels.values():
-            lbl.config(image=self.images['BlankTile'], relief='raised')
-
     def run(self):
         self.root.mainloop()
 
-#Show a single freshly opened board
+#Show a fresh board
 if __name__ == "__main__":
     view = MinesweeperView(ms.Board(ms.Difficulty.BEGINNER))
     view.update_grid_frame()

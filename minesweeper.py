@@ -54,11 +54,9 @@ class BoardState(Enum):
 class Board:
     #Pass the gym environment's rng to make boards reproducible
     def __init__(self, diff, rng=None):
-        self.diff = diff
         self.rng = rng if rng is not None else np.random.default_rng()
         self.rows, self.cols, self.mines = self.get_dimensions(diff)
-        self.safe_tiles = self.rows * self.cols - self.mines
-        self.tiles = self.create_board()
+        self.tiles = [[Tile() for _ in range(self.cols)] for _ in range(self.rows)]
         self.game_status = BoardState.ONGOING
         #Mines are placed on the first clear, so the opening tile is always safe
         #and choosing it is a real decision
@@ -74,8 +72,12 @@ class Board:
             return 16, 30, 99
         raise ValueError(f"Unknown difficulty: {diff}")
 
-    def create_board(self):
-        return [[Tile() for _ in range(self.cols)] for _ in range(self.rows)]
+    #In-bounds neighbours of a tile
+    def neighbours(self, row, col):
+        for dr, dc in NEIGHBOURS:
+            r, c = row + dr, col + dc
+            if 0 <= r < self.rows and 0 <= c < self.cols:
+                yield r, c
 
     def _place_mines(self, safe_zone):
         all_positions = [(r, c) for r in range(self.rows) for c in range(self.cols)]
@@ -93,8 +95,7 @@ class Board:
             for c in range(self.cols):
                 if self.get_tile(r, c).is_mine():
                     continue
-                count = sum(self.get_tile(r + dr, c + dc).is_mine() for dr, dc in NEIGHBOURS
-                            if 0 <= r + dr < self.rows and 0 <= c + dc < self.cols)
+                count = sum(self.get_tile(nr, nc).is_mine() for nr, nc in self.neighbours(r, c))
                 self.get_tile(r, c).set_true_value(count)
 
     def get_tile(self, row, col):
@@ -102,9 +103,6 @@ class Board:
 
     def get_tile_values(self):
         return np.array([[tile.get_value() for tile in row] for row in self.tiles], dtype=np.int32)
-
-    def get_true_tile_values(self):
-        return np.array([[tile.get_true_value() for tile in row] for row in self.tiles])
 
     #The board is won once every tile that is still covered is a mine
     def win_check(self):
@@ -129,20 +127,15 @@ class Board:
     #Flood fill from a tile with no adjacent mines. Returns how many it revealed.
     def read_tiles(self, row, col):
         queue = deque([(row, col)])
-        visited = set([(row, col)])
         revealed = 0
 
         while queue:
             current_row, current_col = queue.popleft()
 
-            for dx, dy in NEIGHBOURS:
-                nx, ny = current_row + dx, current_col + dy
-
-                if not (0 <= nx < self.rows and 0 <= ny < self.cols) or (nx, ny) in visited:
-                    continue
-                visited.add((nx, ny))
+            for nx, ny in self.neighbours(current_row, current_col):
                 tile = self.get_tile(nx, ny)
-                #A revealed tile was expanded already, and a fill never opens a mine
+                #A tile is cleared the first time it is reached, so this also
+                #stops it being visited twice. A fill never opens a mine.
                 if not tile.is_covered() or tile.is_mine():
                     continue
                 if tile.clear() == 0:
