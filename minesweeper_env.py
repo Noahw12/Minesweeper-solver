@@ -1,6 +1,6 @@
 import gymnasium as gym
 import numpy as np
-import Minesweeper as ms
+import minesweeper as ms
 from gymnasium.envs.registration import register
 
 MINE_REWARD = -1.0
@@ -98,7 +98,7 @@ for env_id, env_difficulty in DIFFICULTY_IDS.items():
     env_rows, env_cols, env_mines = ms.Board.get_dimensions(env_difficulty)
     register(
         id=env_id,
-        entry_point='Minesweeper_env:MinesweeperEnv',
+        entry_point='minesweeper_env:MinesweeperEnv',
         max_episode_steps=env_rows * env_cols - env_mines,
         kwargs={'difficulty': env_difficulty},
     )

@@ -1,7 +1,7 @@
 import gymnasium
-from DDQN import DDQN, PrioritizedReplayBuffer, MinesweeperResCNN, MinesweeperPolicy
+from ddqn import DDQN, PrioritizedReplayBuffer, MinesweeperResCNN, MinesweeperPolicy
 #Unused, but importing it registers the env ids with gymnasium
-from Minesweeper_env import MinesweeperEnv
+from minesweeper_env import MinesweeperEnv
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.logger import configure
