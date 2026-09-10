@@ -41,6 +41,9 @@ class MinesweeperEnv(gym.Env):
 
         reward, terminated = self.calculate_reward(guess, revealed)
         info = {'result': self.board.game_status.name,
+                #SB3 reads this on the step an episode ends and logs it as
+                #rollout/success_rate, so the win rate shows up in tensorboard
+                'is_success': self.board.game_status is ms.BoardState.WON,
                 'guess': guess,
                 'revealed': revealed}
 

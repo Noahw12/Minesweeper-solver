@@ -79,6 +79,4 @@ print(f"Saved model at {model_location}")
 #TODO
 #1. Reward structure
 #2. tune parameters
-#3. clean up code (action masking redundancy)
-#5. Log the win rate, mean reward alone hides how many boards are actually cleared
-#6. Update readme at a later point
+#6. Update readme at a later point, get a requirements.txt file
