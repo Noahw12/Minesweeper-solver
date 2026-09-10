@@ -1,7 +1,7 @@
 import gymnasium
-from DDQN import DDQN, PrioritizedReplayBuffer, MinesweeperResCNN, MinesweeperPolicy
+from ddqn import DDQN, PrioritizedReplayBuffer, MinesweeperResCNN, MinesweeperPolicy
 #Unused, but importing it registers the env ids with gymnasium
-from Minesweeper_env import MinesweeperEnv
+from minesweeper_env import MinesweeperEnv
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.logger import configure
@@ -83,5 +83,6 @@ print(f"Saved model at {model_location}")
 #TODO
 #1. Reward structure
 #2. tune parameters
-#3. clean up code 
+#3. clean up code (action masking redundancy)
 #5. Log the win rate, mean reward alone hides how many boards are actually cleared
+#6. Update readme at a later point

@@ -2,7 +2,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torch as th
-from Minesweeper import COVERED
+from minesweeper import COVERED
 from stable_baselines3 import DQN
 from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor

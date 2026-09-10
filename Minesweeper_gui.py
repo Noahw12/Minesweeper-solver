@@ -1,5 +1,5 @@
 import tkinter as tk
-import Minesweeper as ms
+import minesweeper as ms
 
 #Reusable tkinter view of a Minesweeper Board. Minesweeper_watch builds its agent
 #viewer on top of this, so the drawing code only lives here.
