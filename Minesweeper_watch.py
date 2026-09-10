@@ -1,10 +1,10 @@
 import tkinter as tk
 import gymnasium
-import minesweeper as ms
-from ddqn import DDQN
+import Minesweeper as ms
+from DDQN import DDQN
 #Importing the module is what registers the Minesweeper env ids with gymnasium
-from minesweeper_env import MinesweeperEnv
-from minesweeper_gui import MinesweeperView
+from Minesweeper_env import MinesweeperEnv
+from Minesweeper_gui import MinesweeperView
 
 #Pause between agent actions
 pause = 500

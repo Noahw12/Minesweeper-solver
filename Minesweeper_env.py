@@ -1,6 +1,6 @@
 import gymnasium as gym
 import numpy as np
-import minesweeper as ms
+import Minesweeper as ms
 from gymnasium.envs.registration import register
 
 MINE_REWARD = -1.0
@@ -38,16 +38,15 @@ class MinesweeperEnv(gym.Env):
     def step(self, action):
         row, col = divmod(int(action), self.board.cols)
 
-        #The board is authoritative about legality, action_masks is only an aid
-        invalid = not self.board.get_tile(row, col).is_covered()
         #Has to be measured before the tile is cleared
-        guess = False if invalid else self.is_guess(row, col)
-        revealed = 0 if invalid else self.board.clear_tile(row, col)
+        guess = self.is_guess(row, col)
+        #clear_tile refuses a tile that is not covered and returns 0, so nothing
+        #forces a caller to respect a mask and legality needs no separate check
+        revealed = self.board.clear_tile(row, col)
 
         self.state = self.get_state()
-        reward, terminated = self.calculate_reward(invalid, guess, revealed)
+        reward, terminated = self.calculate_reward(guess, revealed)
         info = {'result': self.board.game_status.name,
-                'invalid_action': invalid,
                 'guess': guess,
                 'revealed': revealed}
 
@@ -55,10 +54,6 @@ class MinesweeperEnv(gym.Env):
 
     def get_state(self):
         return self.board.get_tile_values()
-
-    #True for every tile the agent is still allowed to clear
-    def action_masks(self):
-        return (self.board.get_tile_values() == ms.COVERED).flatten()
 
     #A tile with no revealed neighbour carries no information, clearing it is a guess
     def is_guess(self, row, col):
@@ -69,16 +64,17 @@ class MinesweeperEnv(gym.Env):
                     return False
         return True
 
-    def calculate_reward(self, invalid, guess, revealed):
-
-        if invalid:
-            return INVALID_ACTION_REWARD, False
+    def calculate_reward(self, guess, revealed):
 
         #The penalty is for the decision, so it applies whatever the move uncovered
         reward = GUESS_REWARD if guess else 0.0
 
         if self.board.game_status is ms.BoardState.LOST:
             return reward + MINE_REWARD, True
+
+        #Nothing was uncovered, so the tile was already revealed
+        if revealed == 0:
+            return INVALID_ACTION_REWARD, False
 
         reward += SAFE_REWARD
 
@@ -102,7 +98,7 @@ for env_id, env_difficulty in DIFFICULTY_IDS.items():
     env_rows, env_cols, env_mines = ms.Board.get_dimensions(env_difficulty)
     register(
         id=env_id,
-        entry_point='minesweeper_env:MinesweeperEnv',
+        entry_point='Minesweeper_env:MinesweeperEnv',
         max_episode_steps=env_rows * env_cols - env_mines,
         kwargs={'difficulty': env_difficulty},
     )

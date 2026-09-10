@@ -2,7 +2,7 @@ import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 import torch as th
-from minesweeper import COVERED
+from Minesweeper import COVERED
 from stable_baselines3 import DQN
 from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
@@ -64,8 +64,9 @@ class DDQN(DQN):
     def action_mask(self, observation):
         return (observation == COVERED).flatten(start_dim=1)
 
-    def apply_action_mask(self, q_values, observation):
-        mask = self.action_mask(observation)
+    #Takes the mask rather than the observation, so a caller that needs it more
+    #than once builds it once
+    def apply_action_mask(self, q_values, mask):
         return th.where(mask, q_values, th.full_like(q_values, XL_NEG))
 
     def _random_valid_actions(self, obs_tensor):
@@ -101,16 +102,17 @@ class DDQN(DQN):
             obs_tensor_next = replay_data.next_observations.to(th.int64)
 
             with th.no_grad():
+                next_mask = self.action_mask(obs_tensor_next)
                 next_q_values = self.policy.q_net_target(obs_tensor_next)
                 next_q_values_online = self.policy.q_net(obs_tensor_next)
-                masked_next_q_values = self.apply_action_mask(next_q_values, obs_tensor_next)
-                masked_next_q_values_online = self.apply_action_mask(next_q_values_online, obs_tensor_next)
+                masked_next_q_values = self.apply_action_mask(next_q_values, next_mask)
+                masked_next_q_values_online = self.apply_action_mask(next_q_values_online, next_mask)
 
                 next_actions = masked_next_q_values_online.argmax(dim=1, keepdim=True)
                 next_q_values = th.gather(masked_next_q_values, dim=1, index=next_actions).squeeze(1)
                 #A finished board has no legal action, so its masked Q is XL_NEG.
                 #Zero it so the mask cannot leak into a target.
-                has_valid_action = self.action_mask(obs_tensor_next).any(dim=1)
+                has_valid_action = next_mask.any(dim=1)
                 next_q_values = th.where(has_valid_action, next_q_values, th.zeros_like(next_q_values))
                 rewards = replay_data.rewards.squeeze(1)
                 dones = replay_data.dones.squeeze(1)
@@ -151,7 +153,7 @@ class DDQN(DQN):
         else:
             with th.no_grad():
                 q_values = self.policy.q_net(obs_tensor)
-            masked_q_values = self.apply_action_mask(q_values, obs_tensor)
+            masked_q_values = self.apply_action_mask(q_values, self.action_mask(obs_tensor))
             actions = masked_q_values.argmax(dim=1).cpu().numpy().astype(np.int64)
 
         if not vectorized_env:

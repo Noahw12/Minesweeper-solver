@@ -1,7 +1,7 @@
 import gymnasium
-from ddqn import DDQN, PrioritizedReplayBuffer, MinesweeperResCNN, MinesweeperPolicy
+from DDQN import DDQN, PrioritizedReplayBuffer, MinesweeperResCNN, MinesweeperPolicy
 #Unused, but importing it registers the env ids with gymnasium
-from minesweeper_env import MinesweeperEnv
+from Minesweeper_env import MinesweeperEnv
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.logger import configure
@@ -76,7 +76,7 @@ eval_env = make_vec_env(make_env, n_envs=1)
 mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=1000, deterministic=True)
 print(f"Mean reward: {mean_reward} +/- {std_reward}")
 
-model_location = "models/DDQN_agent_0.8"
+model_location = "models/DDQN_agent_0.9"
 model.save(model_location)
 print(f"Saved model at {model_location}")
 
