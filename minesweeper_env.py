@@ -3,13 +3,10 @@ import numpy as np
 import minesweeper as ms
 from gymnasium.envs.registration import register
 
-MINE_REWARD = -1.0
-WIN_REWARD = 5.0
-#Shaping while wins are still too rare to learn from. Flat per move, not per
-#revealed tile, or a lucky flood fill would outweigh the mine penalty.
-SAFE_REWARD = 0.1
-#A blind guess. Tied to SAFE_REWARD so a blind but safe click is worth zero.
-GUESS_REWARD = -SAFE_REWARD
+MINE_REWARD = -0.9
+WIN_REWARD = 1.0
+CLEAR_REWARD_BUDGET = 1.0
+GUESS_REWARD = -0.1
 
 class MinesweeperEnv(gym.Env):
     metadata = {'render_modes': ['ansi']}
@@ -23,6 +20,9 @@ class MinesweeperEnv(gym.Env):
         self.observation_space = gym.spaces.Box(low=0, high=ms.COVERED,
                                                 shape=(self.board.rows, self.board.cols),
                                                 dtype=np.int32)
+        #Derived from the board so the reward scale is the same on every difficulty
+        self.safe_tiles = self.board.rows * self.board.cols - self.board.mines
+        self.clear_reward = CLEAR_REWARD_BUDGET / self.safe_tiles
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -33,16 +33,11 @@ class MinesweeperEnv(gym.Env):
     def step(self, action):
         row, col = divmod(int(action), self.board.cols)
 
-        #Has to be measured before the tile is cleared
         guess = self.is_guess(row, col)
-        #clear_tile refuses a tile that is not covered and returns 0, so nothing
-        #forces a caller to respect a mask and legality needs no separate check
         revealed = self.board.clear_tile(row, col)
 
         reward, terminated = self.calculate_reward(guess, revealed)
         info = {'result': self.board.game_status.name,
-                #SB3 reads this on the step an episode ends and logs it as
-                #rollout/success_rate, so the win rate shows up in tensorboard
                 'is_success': self.board.game_status is ms.BoardState.WON,
                 'guess': guess,
                 'revealed': revealed}
@@ -59,20 +54,16 @@ class MinesweeperEnv(gym.Env):
 
     def calculate_reward(self, guess, revealed):
 
-        #The penalty is for the decision, so it applies whatever the move uncovered
         reward = GUESS_REWARD if guess else 0.0
 
         if self.board.game_status is ms.BoardState.LOST:
             return reward + MINE_REWARD, True
 
-        #Only progress pays, so a click on an already revealed tile earns nothing
-        if revealed > 0:
-            reward += SAFE_REWARD
-
         if self.board.game_status is ms.BoardState.WON:
-            return reward + WIN_REWARD, True
+            return WIN_REWARD, True
 
-        return reward, False
+        #clear_tile returns 0 for a refused click, so only progress pays
+        return reward + self.clear_reward * revealed, False
 
     def render(self):
         self.board.nice_print()
@@ -93,3 +84,16 @@ for env_id, env_difficulty in DIFFICULTY_IDS.items():
         max_episode_steps=env_rows * env_cols - env_mines,
         kwargs={'difficulty': env_difficulty},
     )
+
+
+#    MINE_REWARD = -1.0
+#    WIN_REWARD = 5.0
+#    SAFE_REWARD = 0.1           #flat per move, added on top of the win bonus
+#    GUESS_REWARD = -SAFE_REWARD #so a blind but safe click scored exactly zero
+#
+#    reward = GUESS_REWARD if guess else 0.0
+#    if LOST:          return reward + MINE_REWARD, True
+#    if revealed > 0:  reward += SAFE_REWARD
+#    if WON:           return reward + WIN_REWARD, True
+#    return reward, False
+

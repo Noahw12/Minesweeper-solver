@@ -8,31 +8,31 @@ from stable_baselines3.common.logger import configure
 
 env_id = 'Minesweeper-v0'
 
+lr_initial = 0.00025
+lr_final = 0.00005
+
 def lr_schedule(progress_remaining):
-    return 0.0001 + (0.0005 - 0.0001) * progress_remaining
+    return lr_final + (lr_initial - lr_final) * progress_remaining
 
 def make_env():
     env = gymnasium.make(env_id)
     return env
 
-buffer_size = 200000
-batch_size = 64
-#Horizon 1/(1-gamma) = 33 moves, against won games of about 24
-gamma = 0.97
-expl_fract = 0.2
+buffer_size = 1000000
+batch_size = 32
+gamma = 0.9
+expl_fract = 0.1
 expl_init = 1.0
 expl_fin = 0.01
+learning_starts = (buffer_size // 10)
 
-timesteps = 6000000 + buffer_size
+timesteps = 6000000
 n_envs = 16
-#Soft updates need this every step; SB3's default of 10000 would freeze the target
-target_update_interval = 1
 train_freq = (1, "step")
-gradient_steps = 2
-learning_starts = 25000
+gradient_steps = 4
 
-tau_per_gradient_step = 0.000625
-tau = tau_per_gradient_step * gradient_steps
+tau = 1.0 
+target_update_interval = 10000
 
 vec_env = make_vec_env(make_env, n_envs=n_envs)
 
@@ -43,7 +43,7 @@ model = DDQN(
     vec_env,
     policy_kwargs={
     'features_extractor_class': MinesweeperResCNN,
-    'features_extractor_kwargs': {'n_filters': 128, 'n_blocks': 3},
+    'features_extractor_kwargs': {'n_filters': 64, 'n_blocks': 3},
     'normalize_images': False,
     },
     learning_rate=lr_schedule,
@@ -77,6 +77,5 @@ model.save(model_location)
 print(f"Saved model at {model_location}")
 
 #TODO
-#1. Reward structure
-#2. tune parameters
-#6. Update readme at a later point, get a requirements.txt file
+#1. Recalibrate reward structure and hyperparameters depending on results
+#3. Update readme at a later point, get a requirements.txt file
