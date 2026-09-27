@@ -7,7 +7,7 @@ from minesweeper_env import MinesweeperEnv
 from minesweeper_gui import MinesweeperView
 
 #Pause between agent actions
-pause = 500
+pause = 250
 
 class AgentWatcher(MinesweeperView):
     def __init__(self, env, model):
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     #Init environment, gymnasium.make adds the episode step limit
     env = gymnasium.make('Minesweeper-v0')
 
-    model = DDQN.load("models/DDQN_agent_0.8")
+    model = DDQN.load("models/beginner/DDQN_agent_beginner_1.3")
 
     gui = AgentWatcher(env, model)
     gui.run()

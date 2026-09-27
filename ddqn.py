@@ -11,16 +11,21 @@ from stable_baselines3.common.buffers import ReplayBuffer, ReplayBufferSamples
 #Very big negative number used for action masking
 XL_NEG = -1e9
 
-#The skip is what keeps a stack this deep trainable.
+def _groups(n_filters):
+    return max(g for g in range(1, min(32, n_filters) + 1) if n_filters % g == 0)
+
 class ResidualBlock(nn.Module):
     def __init__(self, n_filters):
         super(ResidualBlock, self).__init__()
+        self.norm1 = nn.GroupNorm(_groups(n_filters), n_filters)
         self.conv1 = nn.Conv2d(n_filters, n_filters, kernel_size=3, padding=1)
+        self.norm2 = nn.GroupNorm(_groups(n_filters), n_filters)
         self.conv2 = nn.Conv2d(n_filters, n_filters, kernel_size=3, padding=1)
 
     def forward(self, x):
-        h = F.relu(self.conv1(x))
-        return F.relu(x + self.conv2(h))
+        h = self.conv1(F.relu(self.norm1(x)))
+        h = self.conv2(F.relu(self.norm2(h)))
+        return x + h
 
 class MinesweeperResCNN(BaseFeaturesExtractor):
     def __init__(self, observation_space, n_filters=128, n_blocks=3):
@@ -30,8 +35,11 @@ class MinesweeperResCNN(BaseFeaturesExtractor):
         #One input channel per tile value the agent can observe
         self.num_classes = int(observation_space.high.max()) + 1
 
-        layers = [nn.Conv2d(self.num_classes, n_filters, kernel_size=3, padding=1), nn.ReLU()]
+        layers = [nn.Conv2d(self.num_classes, n_filters, kernel_size=3, padding=1)]
         layers += [ResidualBlock(n_filters) for _ in range(n_blocks)]
+        #A pre-activation stack ends on a raw sum, so normalise and activate once
+        #before the head reads it
+        layers += [nn.GroupNorm(_groups(n_filters), n_filters), nn.ReLU()]
         #Down to one value per tile, which is the Q-value of clearing it
         layers += [nn.Conv2d(n_filters, 1, kernel_size=1, padding=0), nn.Flatten()]
         self.conv = nn.Sequential(*layers)
@@ -57,6 +65,42 @@ class MinesweeperPolicy(DQNPolicy):
         return ConvQNetwork(**net_args).to(self.device)
 
 class DDQN(DQN):
+    #Class-level default, so a model loaded from a file saved before this existed
+    #still has the attribute. The constructor argument is what normally sets it.
+    augment_symmetry = True
+
+    def __init__(self, *args, augment_symmetry=True, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.augment_symmetry = augment_symmetry
+
+    def _symmetries(self):
+        """Flat tile permutations for every symmetry of this board."""
+        if getattr(self, '_sym_cache', None) is None:
+            rows, cols = self.observation_space.shape
+            flat = th.arange(rows * cols).reshape(rows, cols)
+            views = [flat, th.flip(flat, (0,)), th.flip(flat, (1,)), th.flip(flat, (0, 1))]
+            if rows == cols:
+                turned = th.rot90(flat, 1, (0, 1))
+                views += [turned, th.flip(turned, (0,)),
+                          th.flip(turned, (1,)), th.flip(turned, (0, 1))]
+            #gather[t][i] is the tile that moves to position i under symmetry t,
+            #so the inverse maps a stored action to where that tile ended up
+            gather = th.stack([v.reshape(-1) for v in views]).to(self.device)
+            self._sym_cache = (gather, th.argsort(gather, dim=1))
+        return self._sym_cache
+
+    def _augment(self, obs, next_obs, actions):
+        """Apply an independently drawn symmetry to each transition in the batch."""
+        gather, inverse = self._symmetries()
+        rows, cols = self.observation_space.shape
+        picks = th.randint(len(gather), (obs.shape[0],), device=obs.device)
+        take = gather[picks]
+        obs = th.gather(obs.reshape(obs.shape[0], -1), 1, take).reshape(-1, rows, cols)
+        next_obs = th.gather(next_obs.reshape(next_obs.shape[0], -1), 1,
+                             take).reshape(-1, rows, cols)
+        actions = th.gather(inverse[picks], 1, actions.long())
+        return obs, next_obs, actions
+
     #True for every tile that is still covered, those are the legal actions
     def action_mask(self, observation):
         return (observation == COVERED).flatten(start_dim=1)
@@ -94,6 +138,13 @@ class DDQN(DQN):
                 batch_size, env=self._vec_normalize_env)
             obs_tensor = replay_data.observations.to(th.int64)
             obs_tensor_next = replay_data.next_observations.to(th.int64)
+            actions = replay_data.actions.long()
+
+            if self.augment_symmetry:
+                #The transformed transition is the same puzzle, so its TD error is
+                #still a fair priority for the row it came from
+                obs_tensor, obs_tensor_next, actions = self._augment(
+                    obs_tensor, obs_tensor_next, actions)
 
             with th.no_grad():
                 next_mask = self.action_mask(obs_tensor_next)
@@ -111,7 +162,7 @@ class DDQN(DQN):
             #Must not be masked: that would turn a stored action into XL_NEG and
             #produce a huge TD-error that then dominates prioritised sampling.
             current_q_values = self.policy.q_net(obs_tensor)
-            current_q_values = current_q_values.gather(1, replay_data.actions.long()).squeeze(1)
+            current_q_values = current_q_values.gather(1, actions).squeeze(1)
 
             td_errors = th.abs(current_q_values - target_q_values).detach().cpu().numpy()
             self.replay_buffer.update_priorities(batch_indices, env_indices, td_errors)
