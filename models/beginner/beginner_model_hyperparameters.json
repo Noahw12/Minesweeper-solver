@@ -1,0 +1,41 @@
+{
+  "difficulty": "beginner",
+  "version": "1.17",
+  "seed": 0,
+  "env_id": "MinesweeperBeginner-v0",
+  "network": "MinesweeperResCNN",
+  "n_filters": 128,
+  "n_blocks": 3,
+  "timesteps": 2000000,
+  "n_envs": 16,
+  "buffer_size": 1000000,
+  "learning_starts": 100000,
+  "batch_size": 32,
+  "train_freq": [
+    1,
+    "step"
+  ],
+  "gradient_steps": 4,
+  "lr_initial": 0.00025,
+  "lr_final": 5e-05,
+  "gamma": 0.99,
+  "exploration_fraction": 0.1,
+  "exploration_initial_eps": 0.0,
+  "exploration_final_eps": 0.0,
+  "tau": 1.0,
+  "target_update_interval": 10000,
+  "augment_symmetry": true,
+  "symmetry_loss_coef": 1.0,
+  "n_steps": 1,
+  "n_atoms": 51,
+  "v_min": -1.2,
+  "v_max": 2.0,
+  "dueling": true,
+  "noisy": true,
+  "rewards": {
+    "mine": -0.9,
+    "win": 1.0,
+    "clear_budget": 1.0,
+    "guess": -0.1
+  }
+}

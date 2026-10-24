@@ -1,0 +1,6 @@
+#Versions the models were trained with (Python 3.11)
+torch==2.6.0
+stable-baselines3==2.3.2
+gymnasium==0.29.1
+numpy==1.24.3
+tensorboard==2.16.2
